@@ -8,6 +8,8 @@ research/_dedup_raw/
 _build/
 target/
 *.wasm
+.mooncakes/
+pkg.generated.mbti
 
 # OS / editor noise
 .DS_Store

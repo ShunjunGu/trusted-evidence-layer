@@ -1,0 +1,39 @@
+{
+  "candidates": [
+    {
+      "id": "t1",
+      "text": "first",
+      "source": {
+        "uri": "https://example.com/a",
+        "title": "Doc A",
+        "fetched_at": "2026-11-01T00:00:00Z"
+      },
+      "retrieval_score": 0.95,
+      "span": {
+        "start": 0,
+        "end": 12
+      }
+    },
+    {
+      "id": "a2",
+      "text": "second",
+      "source": {
+        "uri": "s3://bucket/b",
+        "title": "Doc B",
+        "fetched_at": "2026-11-02T00:00:00Z",
+        "hint": "curated"
+      },
+      "retrieval_score": 0.8
+    },
+    {
+      "id": "b2",
+      "text": "third",
+      "source": {
+        "uri": "file:///c/d.txt",
+        "title": "Doc C",
+        "fetched_at": "2026-11-03T00:00:00Z"
+      },
+      "retrieval_score": 0.4
+    }
+  ]
+}

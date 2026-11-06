@@ -1,0 +1,4 @@
+import {
+  "ShunjunGu/moon-trust/src",
+  "ShunjunGu/moon-trust/src/cli",
+} for "test"

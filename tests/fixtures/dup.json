@@ -1,0 +1,24 @@
+{
+  "candidates": [
+    {
+      "id": "c1",
+      "text": "kept first",
+      "source": {
+        "uri": "u1",
+        "title": "T",
+        "fetched_at": "t1"
+      },
+      "retrieval_score": 0.8
+    },
+    {
+      "id": "c1",
+      "text": "dropped second",
+      "source": {
+        "uri": "u2",
+        "title": "T2",
+        "fetched_at": "t2"
+      },
+      "retrieval_score": 0.5
+    }
+  ]
+}

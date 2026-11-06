@@ -1,0 +1,5 @@
+import {
+  "ShunjunGu/moon-trust/src",
+  "moonbitlang/core/string",
+  "moonbitlang/core/debug",
+}

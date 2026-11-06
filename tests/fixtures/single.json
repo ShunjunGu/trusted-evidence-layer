@@ -1,0 +1,15 @@
+{
+  "candidates": [
+    {
+      "id": "c1",
+      "text": "only",
+      "source": {
+        "uri": "u",
+        "title": "T",
+        "fetched_at": "t",
+        "hint": "curated"
+      },
+      "retrieval_score": 0.8
+    }
+  ]
+}

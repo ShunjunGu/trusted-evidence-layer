@@ -1,0 +1,69 @@
+name: ci
+
+# Toolchain here is unpinned on purpose: both official install scripts fall back
+# to `latest` when called with no arguments (binaries/0.1.20261104/* does not
+# exist on the CDN, so there is no stable version channel to pin to).
+# Known risk: `latest` may drift from the toolchain used for local verification.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check-and-test:
+    name: check + test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # `moon check`/`moon test` on the native target must link a C binary,
+      # so the MSVC environment (vcvarsall) has to be set up on Windows first.
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+
+      - name: Install MoonBit (*nix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
+
+      # The Windows installer only adds ~/.moon/bin to the *user-level* PATH
+      # (takes effect after restart), so export the path explicitly here.
+      - name: Install MoonBit (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          irm https://cli.moonbitlang.com/install/powershell.ps1 | iex
+          Add-Content $env:GITHUB_PATH "$env:USERPROFILE\.moon\bin"
+
+      - name: Update registry
+        run: moon update
+
+      - name: Check (deny warnings, all targets)
+        run: moon check --deny-warn --target all
+
+      - name: Test (all targets)
+        run: moon test --target all
+
+  fmt:
+    name: fmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install MoonBit
+        shell: bash
+        run: |
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
+
+      - name: Format (fail if it produces a diff)
+        run: |
+          moon fmt
+          git diff --exit-code
