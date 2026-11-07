@@ -335,10 +335,7 @@ test "trust score and sub-signals stay within [0, 1] for any candidate shape" {
       assert_true(
         breakdown.template_ratio >= 0.0 && breakdown.template_ratio <= 1.0,
       )
-      assert_true(
-        breakdown.consistency >= 0.0 &&
-        breakdown.consistency <= 1.0,
-      )
+      assert_true(breakdown.consistency >= 0.0 && breakdown.consistency <= 1.0)
       assert_true(
         breakdown.content_score >= 0.0 && breakdown.content_score <= 1.0,
       )
@@ -478,11 +475,7 @@ test "evidence consistency stays neutral until conflict detection" {
   ])
   // Same UTF-16 length and no template markers: only the consistency signal
   // could separate the two, and it must stay neutral (1.0, no penalty).
-  assert_true(
-    near(report.evidence[0].trust.breakdown.consistency, 1.0),
-  )
-  assert_true(
-    near(report.evidence[1].trust.breakdown.consistency, 1.0),
-  )
+  assert_true(near(report.evidence[0].trust.breakdown.consistency, 1.0))
+  assert_true(near(report.evidence[1].trust.breakdown.consistency, 1.0))
   assert_eq(report.evidence[0].trust.score, report.evidence[1].trust.score)
 }
