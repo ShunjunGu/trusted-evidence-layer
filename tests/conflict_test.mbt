@@ -436,3 +436,18 @@ test "different magnitudes never pair under one subject" {
   assert_eq(conflicts_for(report, "france", "million").length(), 1)
   assert_eq(conflicts_for(report, "france", "trillion").length(), 0)
 }
+
+///|
+test "conflict pairing is capped and the truncation is flagged" {
+  let candidates : Array[@src.Candidate] = []
+  for i in 1..<47 {
+    candidates.push(
+      conflict_candidate("c\{i}", "Population is \{i} million.", ""),
+    )
+  }
+  let report = @src.scan("q", @src.ScanConfig::default(), candidates)
+  // 46 distinct values produce 46 * 45 / 2 = 1035 pairs; the cap keeps 1000.
+  assert_eq(report.conflicts.length(), 1000)
+  assert_eq(report.diagnostics.conflict_count, 1000)
+  assert_eq(report.diagnostics.conflicts_truncated, true)
+}

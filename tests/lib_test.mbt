@@ -53,7 +53,7 @@ test "empty scan output is the frozen skeleton shape" {
   )
   assert_eq(
     render(report),
-    "{\"query\":\"hello\",\"config\":{},\"evidence\":[],\"conflicts\":[],\"quarantined\":[],\"blocked\":false,\"diagnostics\":{\"candidate_count\":0,\"duplicate_id_count\":0,\"unknown_rule_ids\":[],\"risk_finding_count\":0,\"quarantined_count\":0,\"conflict_count\":0,\"output_count\":0,\"stages\":[{\"name\":\"ingest\",\"count\":0},{\"name\":\"dedupe\",\"count\":0},{\"name\":\"risk\",\"count\":0},{\"name\":\"isolate\",\"count\":0},{\"name\":\"conflict\",\"count\":0},{\"name\":\"sort\",\"count\":0},{\"name\":\"topk\",\"count\":0}]}}",
+    "{\"query\":\"hello\",\"config\":{},\"evidence\":[],\"conflicts\":[],\"quarantined\":[],\"blocked\":false,\"diagnostics\":{\"candidate_count\":0,\"duplicate_id_count\":0,\"unknown_rule_ids\":[],\"risk_finding_count\":0,\"quarantined_count\":0,\"conflict_count\":0,\"conflicts_truncated\":false,\"output_count\":0,\"stages\":[{\"name\":\"ingest\",\"count\":0},{\"name\":\"dedupe\",\"count\":0},{\"name\":\"risk\",\"count\":0},{\"name\":\"isolate\",\"count\":0},{\"name\":\"conflict\",\"count\":0},{\"name\":\"sort\",\"count\":0},{\"name\":\"topk\",\"count\":0}]}}",
   )
 }
 

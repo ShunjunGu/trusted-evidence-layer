@@ -19,7 +19,7 @@
 
 - 管线顺序：`dedupe → risk → isolate → conflict → trust → rerank → topk`。冲突只在上一步存活（未隔离）的 evidence 之间检测；被 drop 的块不参与。
 - 新增公开类型 `Conflict { id, subject, unit, left, right }` 与 `ConflictSide { evidence_id, value, value_text, span }`。
-- `ScanReport` 新增 `conflicts`；`Evidence` 新增 `conflict_ids`（指回参与的冲突 id）与 `conflict_penalty`；`Diagnostics` 新增 `conflict_count`；阶段序列新增 `conflict`。
+- `ScanReport` 新增 `conflicts`；`Evidence` 新增 `conflict_ids`（指回参与的冲突 id）、`conflict_penalty` 与 `retrieval_normalized`；`Diagnostics` 新增 `conflict_count` 与 `conflicts_truncated`；阶段序列新增 `conflict`。
 - 每个冲突是两条不同 evidence 的显式配对；`left`/`right` 各带 evidence_id、可比较的 `value`、原样 `value_text` 与可切片原文的 span。同一 evidence 的内部矛盾不会与自己配对。
 
 ### claim 抽取
@@ -36,7 +36,7 @@
 - 按 `(subject, unit)` 分组；不同 evidence、不同取值才配对。相同取值不报；不同单位不互相比较（`10 km` 与 `10 miles`、`68 million` 与 `3 trillion` 均分属不同组）。
 - 同一 evidence 对同一 (subject, unit, value) 的重复断言去重；不同取值的内部矛盾保留，但只与其它 evidence 配对。
 - `trust.breakdown.consistency = 1 / (1 + conflict_count)` 接入内容分项。
-- `conflict_penalty = clamp01(conflict_weight × conflict_count)` 从重排分扣除：`rerank = retrieval + trust_weight × trust − conflict_penalty`。默认 `conflict_weight = 0.5`；非有限值回退 0.5，负值视为 0。
+- `conflict_penalty = clamp01(conflict_weight × conflict_count)` 从重排分扣除：`rerank = retrieval_normalized + trust_weight × trust − conflict_penalty`。默认 `conflict_weight = 0.5`；非有限值回退 0.5，负值视为 0。检索分按批次条件归一化（ADR-0003），`Evidence` 同时暴露原始 `retrieval_score` 与 `retrieval_normalized`。
 - `ScanConfig` 新增 `conflict_weight`（可选、默认 `{}` 回显），CLI 新增 `--conflict-weight W`（非负有限数，0 允许：关闭额外重排惩罚但保留一致性信号）。
 - `top_k` 只截断 `evidence`；`conflicts` 与 evidence 的 `conflict_ids` 作为审计数据保留。
 
@@ -53,9 +53,15 @@
 - **F2（记录为边界）**：共享一个分隔符的多个属性仍归入同一 subject（`France: population 68 million, GDP 70 million` 同属 `france`）。README 已注明：同子句多属性应各自给键。
 - **F3（记录为边界）**：`(subject, unit)` 组内配对为 O(k²)，大候选集会产生大报告；README 已注明保持检索级 top-k。
 
+### 收尾补强（05 前）
+
+- **检索分归一化**：整批已在 [0,1] 时原样使用，否则 min-max；全批等值且超出 [0,1] 时取 0.5。`Evidence.retrieval_normalized` 暴露实际参与重排的值；ADR-0003 记录理由与备选方案。
+- **冲突上限**：每次扫描最多输出 1000 条冲突，按 canonical 顺序；超出时 `Diagnostics.conflicts_truncated = true`。
+- 新增 `tests/normalization_test.mbt`（4 个用例）与冲突上限回归测试（46 个候选 → 1035 对，截断到 1000）。
+
 ### 验证
 
 - `moon check --deny-warn --target all` → 0 warning、0 error。
-- `moon test --target all` → 86/86 通过（wasm、wasm-gc、js、native）；含非法日期不泄漏月/日 claim、中文/英文体积单位统一、跨量级不配对的回归用例。
-- CLI 端到端：`scan france tests/fixtures/conflicts.json` → 10 evidence / 7 conflicts / blocked false；连跑两次 SHA256 均为 `b44d64caabc6aa4fccf0520898c9a89bab49578f4f25d7c2fcc9aa2be816ff9b`。
+- `moon test --target all` → 91/91 通过（wasm、wasm-gc、js、native）；含非法日期不泄漏月/日 claim、中文/英文体积单位统一、跨量级不配对、归一化与截断的回归用例。
+- CLI 端到端：`scan france tests/fixtures/conflicts.json` → 10 evidence / 7 conflicts / blocked false；连跑两次 SHA256 均为 `9e13b3a22ad4a64f33377a86be2ab38af5bb009e5a421e98931533ce0fcaa094`。
 - 重排惩罚可翻转顺序：在 `trust_weight = 0` 的隔离实验中，无惩罚时按 id 为 `a, b, clean`；`conflict_weight = 1` 时干净块 `clean` 以 0.5 对 −0.5 升至首位。

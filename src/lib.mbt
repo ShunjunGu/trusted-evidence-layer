@@ -99,6 +99,7 @@ pub(all) struct Evidence {
   text : String
   source : SourceMeta
   retrieval_score : Double
+  retrieval_normalized : Double
   span : Span?
   risk_findings : Array[RiskFinding]
   conflict_ids : Array[String]
@@ -125,6 +126,7 @@ pub(all) struct Diagnostics {
   risk_finding_count : Int32
   quarantined_count : Int32
   conflict_count : Int32
+  conflicts_truncated : Bool
   output_count : Int32
   stages : Array[StageRecord]
 }
@@ -342,7 +344,31 @@ pub fn scan(
   for entry in survivors {
     conflict_candidates.push(entry.candidate)
   }
-  let conflicts = detect_conflicts(query, conflict_candidates)
+  let (conflicts, conflicts_truncated) = detect_conflicts(
+    query, conflict_candidates,
+  )
+  // Retrieval normalization is decided once per batch: scores already inside
+  // [0, 1] are used as-is; any other batch is min-max normalized so a
+  // BM25-style scale cannot drown the trust and conflict signals.
+  let mut retrieval_min = 0.0
+  let mut retrieval_max = 0.0
+  let mut has_retrieval = false
+  for entry in survivors {
+    let score = finite_or(entry.candidate.retrieval_score, 0.0)
+    if !has_retrieval {
+      retrieval_min = score
+      retrieval_max = score
+      has_retrieval = true
+    } else {
+      if score < retrieval_min {
+        retrieval_min = score
+      }
+      if score > retrieval_max {
+        retrieval_max = score
+      }
+    }
+  }
+  let retrieval_already_unit = retrieval_min >= 0.0 && retrieval_max <= 1.0
   let scored : Array[Entry] = []
   for entry in survivors {
     let factor = if downrank_policy {
@@ -362,7 +388,13 @@ pub fn scan(
     let conflict_penalty = clamp_unit(
       conflict_weight * conflict_count.to_double(),
     )
-    let rerank = finite_or(entry.candidate.retrieval_score, 0.0) +
+    let retrieval_normalized = normalize_retrieval(
+      entry.candidate.retrieval_score,
+      retrieval_min,
+      retrieval_max,
+      retrieval_already_unit,
+    )
+    let rerank = retrieval_normalized +
       trust_weight * trust.score -
       conflict_penalty
     scored.push({
@@ -373,6 +405,7 @@ pub fn scan(
       findings: entry.findings,
       conflict_ids: refs.0,
       conflict_penalty,
+      retrieval_normalized,
     })
   }
   let ordered = order_candidates(scored)
@@ -399,6 +432,7 @@ pub fn scan(
       risk_finding_count,
       quarantined_count: quarantined.length(),
       conflict_count: conflicts.length(),
+      conflicts_truncated,
       output_count: evidence.length(),
       stages: [
         { name: "ingest", count: candidate_count, },
@@ -448,6 +482,7 @@ priv struct Entry {
   findings : Array[RiskFinding]
   conflict_ids : Array[String]
   conflict_penalty : Double
+  retrieval_normalized : Double
 }
 
 ///|
@@ -502,6 +537,26 @@ fn finite_or(value : Double, fallback : Double) -> Double {
     value
   } else {
     fallback
+  }
+}
+
+///|
+/// Normalize one retrieval score for reranking. A batch already inside
+/// [0, 1] keeps its scores; any other batch is min-max normalized. Equal
+/// scores outside [0, 1] collapse to 0.5 (ordering is unaffected).
+fn normalize_retrieval(
+  score : Double,
+  min : Double,
+  max : Double,
+  already_unit : Bool,
+) -> Double {
+  let value = finite_or(score, 0.0)
+  if already_unit {
+    value
+  } else if max - min <= 1.0e-12 {
+    0.5
+  } else {
+    clamp_unit((value - min) / (max - min))
   }
 }
 
@@ -668,6 +723,7 @@ fn to_evidence(entry : Entry) -> Evidence {
     text: entry.candidate.text,
     source: entry.candidate.source,
     retrieval_score: finite_or(entry.candidate.retrieval_score, 0.0),
+    retrieval_normalized: entry.retrieval_normalized,
     span: entry.candidate.span,
     risk_findings: entry.findings,
     conflict_ids: entry.conflict_ids,

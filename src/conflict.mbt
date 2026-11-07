@@ -81,12 +81,17 @@ priv struct ParsedDate {
 const SUBJECT_TRIM : String = " \t\r\n\"'`“”‘’()（）[]【】{}<>#*_,;:.!?，。；：！？、-—–"
 
 ///|
+/// Maximum number of conflict pairs emitted for one scan. Pairs are emitted
+/// in canonical order; the remainder is dropped and flagged in diagnostics.
+const MAX_CONFLICTS : Int32 = 1000
+
+///|
 /// Extract every claim from `candidates` and pair incompatible assertions.
 /// Only cross-evidence pairs are reported, one Conflict per pair.
 fn detect_conflicts(
   query : String,
   candidates : Array[Candidate],
-) -> Array[Conflict] {
+) -> (Array[Conflict], Bool) {
   let query_subject = normalize_key(query)
   let claims : Array[Claim] = []
   for candidate in candidates {
@@ -97,7 +102,7 @@ fn detect_conflicts(
   }
   let sorted = sort_claims(claims)
   let deduped = dedup_claims(sorted)
-  pair_claims(deduped)
+  pair_claims(deduped, MAX_CONFLICTS)
 }
 
 ///|
@@ -1249,10 +1254,12 @@ fn dedup_claims(claims : Array[Claim]) -> Array[Claim] {
 ///|
 /// Pair different-evidence claims with different values in the same
 /// (subject, unit) group.
-fn pair_claims(claims : Array[Claim]) -> Array[Conflict] {
+fn pair_claims(claims : Array[Claim], limit : Int32) -> (Array[Conflict], Bool) {
   let conflicts : Array[Conflict] = []
+  let mut truncated = false
+  let mut stopped = false
   let mut index = 0
-  while index < claims.length() {
+  while index < claims.length() && !stopped {
     let subject = claims[index].subject
     let unit = claims[index].unit
     let mut group_end = index + 1
@@ -1262,30 +1269,35 @@ fn pair_claims(claims : Array[Claim]) -> Array[Conflict] {
       group_end = group_end + 1
     }
     let mut left_index = index
-    while left_index < group_end {
+    while left_index < group_end && !stopped {
       let mut right_index = left_index + 1
-      while right_index < group_end {
+      while right_index < group_end && !stopped {
         let left = claims[left_index]
         let right = claims[right_index]
         if left.evidence_id != right.evidence_id &&
           !values_equal(left.value, right.value) {
-          conflicts.push({
-            id: conflict_id(left, right),
-            subject,
-            unit,
-            left: {
-              evidence_id: left.evidence_id,
-              value: left.value,
-              value_text: left.value_text,
-              span: left.span,
-            },
-            right: {
-              evidence_id: right.evidence_id,
-              value: right.value,
-              value_text: right.value_text,
-              span: right.span,
-            },
-          })
+          if conflicts.length() >= limit {
+            truncated = true
+            stopped = true
+          } else {
+            conflicts.push({
+              id: conflict_id(left, right),
+              subject,
+              unit,
+              left: {
+                evidence_id: left.evidence_id,
+                value: left.value,
+                value_text: left.value_text,
+                span: left.span,
+              },
+              right: {
+                evidence_id: right.evidence_id,
+                value: right.value,
+                value_text: right.value_text,
+                span: right.span,
+              },
+            })
+          }
         }
         right_index = right_index + 1
       }
@@ -1293,7 +1305,7 @@ fn pair_claims(claims : Array[Claim]) -> Array[Conflict] {
     }
     index = group_end
   }
-  conflicts
+  (conflicts, truncated)
 }
 
 ///|
