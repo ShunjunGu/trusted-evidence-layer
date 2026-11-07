@@ -65,7 +65,7 @@ pub(all) struct TrustBreakdown {
   source_type : Double
   length : Double
   template_ratio : Double
-  language_consistency : Double
+  consistency : Double
 }
 
 ///|
@@ -386,8 +386,8 @@ fn score_trust(
   let length = length_score(candidate.text)
   let template_ratio = template_marker_ratio(candidate.text)
   let template = template_cleanliness(template_ratio)
-  let language = language_score(candidate.text)
-  let content_score = (length + template + language) / 3.0
+  let consistency = consistency_score(candidate.text)
+  let content_score = (length + template + consistency) / 3.0
   let raw = source_weight * source_score + content_weight * content_score
   let score = if raw < 0.0 { 0.0 } else if raw > 1.0 { 1.0 } else { raw }
   {
@@ -399,7 +399,7 @@ fn score_trust(
       source_type: scheme,
       length,
       template_ratio,
-      language_consistency: language,
+      consistency,
     },
   }
 }
@@ -498,7 +498,7 @@ fn template_cleanliness(ratio : Double) -> Double {
 /// 语言一致性 signal. Zero penalty in this ticket: the constant 1.0 keeps
 /// CJK/ASCII scripts neutral. 跨文档一致性 (ticket 04) replaces this
 /// placeholder without changing the breakdown shape.
-fn language_score(_text : String) -> Double {
+fn consistency_score(_text : String) -> Double {
   1.0
 }
 

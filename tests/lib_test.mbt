@@ -223,11 +223,11 @@ test "trust breakdown carries every sub-signal from a worked example" {
   assert_true(near(breakdown.metadata, 0.75))
   assert_true(near(breakdown.source_type, 1.0))
   assert_true(near(breakdown.source_score, 0.875))
-  // Content: length 4/40, no template markers, neutral language -> 0.7.
+  // Content: length 4/40, no template markers, neutral consistency -> 0.7.
   assert_true(near(breakdown.length, 0.1))
   // Raw marker share, not the inverted cleanliness score.
   assert_true(near(breakdown.template_ratio, 0.0))
-  assert_true(near(breakdown.language_consistency, 1.0))
+  assert_true(near(breakdown.consistency, 1.0))
   assert_true(near(breakdown.content_score, 0.7))
   // Equal default source/content weights -> (0.875 + 0.7) / 2.
   assert_true(near(trust.score, 0.7875))
@@ -336,8 +336,8 @@ test "trust score and sub-signals stay within [0, 1] for any candidate shape" {
         breakdown.template_ratio >= 0.0 && breakdown.template_ratio <= 1.0,
       )
       assert_true(
-        breakdown.language_consistency >= 0.0 &&
-        breakdown.language_consistency <= 1.0,
+        breakdown.consistency >= 0.0 &&
+        breakdown.consistency <= 1.0,
       )
       assert_true(
         breakdown.content_score >= 0.0 && breakdown.content_score <= 1.0,
@@ -452,7 +452,7 @@ test "non-finite weights fall back to deterministic defaults" {
 }
 
 ///|
-test "language consistency stays neutral in this ticket" {
+test "evidence consistency stays neutral until conflict detection" {
   let source : @src.SourceMeta = {
     uri: "https://example.com/x",
     title: "T",
@@ -476,13 +476,13 @@ test "language consistency stays neutral in this ticket" {
   let report = @src.scan("q", { ..@src.ScanConfig::default(), top_k: None, }, [
     ascii, cjk,
   ])
-  // Same UTF-16 length and no template markers: only the language signal
+  // Same UTF-16 length and no template markers: only the consistency signal
   // could separate the two, and it must stay neutral (1.0, no penalty).
   assert_true(
-    near(report.evidence[0].trust.breakdown.language_consistency, 1.0),
+    near(report.evidence[0].trust.breakdown.consistency, 1.0),
   )
   assert_true(
-    near(report.evidence[1].trust.breakdown.language_consistency, 1.0),
+    near(report.evidence[1].trust.breakdown.consistency, 1.0),
   )
   assert_eq(report.evidence[0].trust.score, report.evidence[1].trust.score)
 }

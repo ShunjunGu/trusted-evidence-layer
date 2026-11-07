@@ -22,10 +22,10 @@
 - `source_score = (metadata + source_type) / 2`：
   - `metadata` = `{uri, title, fetched_at, hint}` 四项中非空/存在的比例（0、0.25、…、1）。
   - `source_type` 按 URI scheme 分档：https 1.0、s3/gs 0.8、http 0.6、file 0.4、其他 scheme 0.3、无 scheme 0.2。
-- `content_score = (length + template_cleanliness + language_consistency) / 3`：
+- `content_score = (length + template_cleanliness + consistency) / 3`：
   - `length` = UTF-16 码元数 / 40，夹到 [0,1]。
   - `template_ratio` 报告原始 `{`, `}`, `<`, `>` 占比（越高越差；空文本记为 1.0），内容分项使用 `template_cleanliness = clamp01(1 - 8 × template_ratio)`，占比 ≥ 12.5% 即 0 分。
-  - `language_consistency` 本票恒为 1.0（零惩罚占位），04 替换实现但保持 breakdown 形状。
+  - `consistency` 本票恒为 1.0（零惩罚占位），04 替换实现但保持 breakdown 形状。
 - 每个子信号独立夹取后再混合，最终再夹一次 → 即使构造负数/零和/非有限权重，信任分仍在 [0,1]。
 
 ### 重排与确定性
@@ -36,7 +36,7 @@
 
 ### 契约与序列化
 
-- `Evidence` 新增 `rerank_score` 与 `trust{score, breakdown{source_score, content_score, metadata, source_type, length, template_ratio, language_consistency}}`。
+- `Evidence` 新增 `rerank_score` 与 `trust{score, breakdown{source_score, content_score, metadata, source_type, length, template_ratio, consistency}}`。
 - `ScanConfig` 新增三个可选权重字段；报告回显输入配置快照，缺省键仍被省略（默认配置序列化为 `{}`）。
 - 新增 `ScanConfig::default()`（显式 `extend`），调用方无需逐字段拼写；CLI 使用 `{ ..ScanConfig::default(), top_k }`。
 - 新增 `tests/fixtures/quality_gap.json`，与测试内嵌 `QUALITY_GAP` 常量同形。
