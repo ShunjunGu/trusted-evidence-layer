@@ -1,6 +1,6 @@
 # moon-trust
 
-A **deterministic trusted-evidence layer** between retrievers and generators: every scan turns an untrusted retrieval feed into a single-line, JSON-serializable report — snapshot of the query and config, risk findings per block, explicit cross-document conflicts, quarantine audit trail, evidence re-ranked by retrieval score plus an explainable trust score minus conflict penalties, and diagnostics — and two runs on identical inputs produce **byte-identical** output.
+A **deterministic trusted-evidence layer** between retrievers and generators: every scan turns an untrusted retrieval feed into a single-line, JSON-serializable report — snapshot of the query and config, risk findings per block, explicit cross-document conflicts, quarantine audit trail, evidence re-ranked by retrieval score plus an explainable trust score minus conflict penalties, a budgeted generator-ready context with citations, and diagnostics — and two runs on identical inputs produce **byte-identical** output.
 
 ## Install
 
@@ -22,7 +22,7 @@ The native binary lives under `_build/native/debug/build/cmd/main/main.exe`:
 
 ```console
 $ _build/native/debug/build/cmd/main/main.exe scan hello tests/fixtures/multi.json
-{"query":"hello","config":{},"evidence":[{"id":"t1","text":"first","source":{"uri":"https://example.com/a","title":"Doc A","fetched_at":"2026-11-01T00:00:00Z"},"retrieval_score":0.95,"retrieval_normalized":0.95,"span":{"start":0,"end":12},"risk_findings":[],"conflict_ids":[],"conflict_penalty":0,"rerank_score":1.7416666666666667,"trust":{"score":0.7916666666666667,"breakdown":{"source_score":0.875,"content_score":0.7083333333333334,"metadata":0.75,"source_type":1,"length":0.125,"template_ratio":0,"consistency":1,"risk":1}}},{"id":"a2","text":"second","source":{"uri":"s3://bucket/b","title":"Doc B","fetched_at":"2026-11-02T00:00:00Z","hint":"curated"},"retrieval_score":0.8,"retrieval_normalized":0.8,"risk_findings":[],"conflict_ids":[],"conflict_penalty":0,"rerank_score":1.6083333333333334,"trust":{"score":0.8083333333333333,"breakdown":{"source_score":0.9,"content_score":0.7166666666666667,"metadata":1,"source_type":0.8,"length":0.15,"template_ratio":0,"consistency":1,"risk":1}}},{"id":"b2","text":"third","source":{"uri":"file:///c/d.txt","title":"Doc C","fetched_at":"2026-11-03T00:00:00Z"},"retrieval_score":0.4,"retrieval_normalized":0.4,"risk_findings":[],"conflict_ids":[],"conflict_penalty":0,"rerank_score":1.0416666666666665,"trust":{"score":0.6416666666666666,"breakdown":{"source_score":0.575,"content_score":0.7083333333333334,"metadata":0.75,"source_type":0.4,"length":0.125,"template_ratio":0,"consistency":1,"risk":1}}}],"conflicts":[],"quarantined":[],"blocked":false,"diagnostics":{"candidate_count":3,"duplicate_id_count":0,"unknown_rule_ids":[],"risk_finding_count":0,"quarantined_count":0,"conflict_count":0,"conflicts_truncated":false,"output_count":3,"stages":[{"name":"ingest","count":3},{"name":"dedupe","count":3},{"name":"risk","count":0},{"name":"isolate","count":3},{"name":"conflict","count":0},{"name":"sort","count":3},{"name":"topk","count":3}]}}
+{"query":"hello","config":{},"evidence":[{"id":"t1","text":"first","source":{"uri":"https://example.com/a","title":"Doc A","fetched_at":"2026-11-01T00:00:00Z"},"retrieval_score":0.95,"retrieval_normalized":0.95,"span":{"start":0,"end":12},"risk_findings":[],"conflict_ids":[],"conflict_penalty":0,"rerank_score":1.7416666666666667,"trust":{"score":0.7916666666666667,"breakdown":{"source_score":0.875,"content_score":0.7083333333333334,"metadata":0.75,"source_type":1,"length":0.125,"template_ratio":0,"consistency":1,"risk":1}}},{"id":"a2","text":"second","source":{"uri":"s3://bucket/b","title":"Doc B","fetched_at":"2026-11-02T00:00:00Z","hint":"curated"},"retrieval_score":0.8,"retrieval_normalized":0.8,"risk_findings":[],"conflict_ids":[],"conflict_penalty":0,"rerank_score":1.6083333333333334,"trust":{"score":0.8083333333333333,"breakdown":{"source_score":0.9,"content_score":0.7166666666666667,"metadata":1,"source_type":0.8,"length":0.15,"template_ratio":0,"consistency":1,"risk":1}}},{"id":"b2","text":"third","source":{"uri":"file:///c/d.txt","title":"Doc C","fetched_at":"2026-11-03T00:00:00Z"},"retrieval_score":0.4,"retrieval_normalized":0.4,"risk_findings":[],"conflict_ids":[],"conflict_penalty":0,"rerank_score":1.0416666666666665,"trust":{"score":0.6416666666666666,"breakdown":{"source_score":0.575,"content_score":0.7083333333333334,"metadata":0.75,"source_type":0.4,"length":0.125,"template_ratio":0,"consistency":1,"risk":1}}}],"context":{"budget":512,"estimated_tokens":41,"truncated":false,"included_count":3,"omitted_count":0,"text":"[1] first\nsource: Doc A | https://example.com/a | 2026-11-01T00:00:00Z\n\n[2] second\nsource: Doc B | s3://bucket/b | 2026-11-02T00:00:00Z\n\n[3] third\nsource: Doc C | file:///c/d.txt | 2026-11-03T00:00:00Z","citations":[{"index":1,"evidence_id":"t1","source":{"uri":"https://example.com/a","title":"Doc A","fetched_at":"2026-11-01T00:00:00Z"}},{"index":2,"evidence_id":"a2","source":{"uri":"s3://bucket/b","title":"Doc B","fetched_at":"2026-11-02T00:00:00Z","hint":"curated"}},{"index":3,"evidence_id":"b2","source":{"uri":"file:///c/d.txt","title":"Doc C","fetched_at":"2026-11-03T00:00:00Z"}}]},"conflicts":[],"quarantined":[],"blocked":false,"diagnostics":{"candidate_count":3,"duplicate_id_count":0,"unknown_rule_ids":[],"risk_finding_count":0,"quarantined_count":0,"conflict_count":0,"conflicts_truncated":false,"output_count":3,"stages":[{"name":"ingest","count":3},{"name":"dedupe","count":3},{"name":"risk","count":0},{"name":"isolate","count":3},{"name":"conflict","count":0},{"name":"sort","count":3},{"name":"topk","count":3},{"name":"context","count":3}]}}
 ```
 
 Evidence is ordered by `rerank_score = retrieval_normalized + trust_weight × trust.score − conflict_penalty` (descending), with ties broken by id ascending. Retrieval scores already inside `[0, 1]` are used as-is; any other batch is min-max normalized to `[0, 1]`, and the value used by rerank is echoed as `retrieval_normalized` alongside the raw `retrieval_score`. Trust is an explainable heuristic in `[0, 1]`: it blends source signals (metadata completeness, URI scheme) with content signals (length, raw template-marker share, cross-document consistency), then multiplies by the risk factor reported as `trust.breakdown.risk`. The two provenance/content weights default to 0.5/0.5, `trust_weight` defaults to 1.0, and `conflict_weight` defaults to 0.5; library callers can override them via `ScanConfig`, and non-finite values fall back to those defaults.
@@ -34,6 +34,7 @@ Optional flags:
 - `--block-on-high` sets `blocked: true` and makes the CLI exit `3` when any high-severity finding exists — including findings on blocks the drop policy removed.
 - `--risk-weight W` scales the risk penalty with a positive finite number (default `1.0`; `0` is rejected).
 - `--conflict-weight W` scales the per-conflict rerank penalty with a non-negative finite number (default `0.5`; `0` disables the extra rerank penalty but keeps the consistency signal).
+- `--context-budget N` caps the approximate token budget of the assembled evidence context with a non-negative integer (default `512`; `0` produces an empty context while keeping the full report).
 
 ```console
 $ _build/native/debug/build/cmd/main/main.exe scan hello tests/fixtures/injected.json --policy drop --block-on-high
@@ -76,7 +77,7 @@ Isolation policies:
 
 Library callers can additionally set `enabled_rules: Some([...])` in `ScanConfig` to restrict scanning to specific rule ids; an absent list enables the whole registry and an empty list disables it. Unknown ids are ignored by the scanner but echoed in `diagnostics.unknown_rule_ids`, so a typo cannot silently disable a rule.
 
-`diagnostics` reports `risk_finding_count` (all findings), `quarantined_count`, `conflict_count` (explicit pairs), `conflicts_truncated`, `output_count`, and `unknown_rule_ids`. The stage counters are `ingest` (input candidates), `dedupe` (kept after id dedupe), `risk` (blocks with at least one finding), `isolate` (blocks surviving the policy), `conflict` (reported pairs), `sort` (ranked evidence), and `topk` (evidence after truncation).
+`diagnostics` reports `risk_finding_count` (all findings), `quarantined_count`, `conflict_count` (explicit pairs), `conflicts_truncated`, `output_count`, and `unknown_rule_ids`. The stage counters are `ingest` (input candidates), `dedupe` (kept after id dedupe), `risk` (blocks with at least one finding), `isolate` (blocks surviving the policy), `conflict` (reported pairs), `sort` (ranked evidence), `topk` (evidence after truncation), and `context` (evidence included in the assembled context).
 
 ### 误报与边界
 
@@ -125,6 +126,43 @@ Each `conflicts[]` entry names both sides (`evidence_id`, comparable `value`, or
 - **Chinese copulas are heuristic.** `为` and `是` inside compounds can produce a short or wrong key; prefer explicit colons in Chinese text.
 - **Chinese/English only.** Other date formats and languages are out of scope; spans count UTF-16 code units and map back through normalization.
 
+## 证据上下文组装
+
+The last pipeline stage turns the ranked `evidence` into `context`, the plain-text artifact a generator consumes. The context is assembled greedily in rank order under an approximate token budget (`ScanConfig.context_budget`, default `512`); over-budget evidence is omitted whole, never cut mid-block, and `context.truncated` / `context.omitted_count` record the omission. `top_k` runs first, so `omitted_count` counts only budget omissions.
+
+Each included block renders as:
+
+```text
+[1] <evidence text>
+source: <title or (untitled)> | <uri> | <fetched_at>
+```
+
+`context.citations` has one record per marker: `index` (1-based, equal to `n`), `evidence_id`, and the evidence's `source` metadata (`uri`, `title`, `fetched_at`, optional `hint`). Every `[n]` marker in the generated text resolves to `citations[n - 1]` and to an id present in `evidence`.
+
+When the included evidence carries risk findings or conflict pairs, the context closes with appendices:
+
+```text
+Risks:
+- [1] instruction.override (high): phrase rule: ...
+
+Conflicts:
+- [1] vs [2] france (million): 68 million vs 67 million
+```
+
+`Risks:` lists the findings of included evidence, anchored at its marker. `Conflicts:` lists only pairs whose **both** sides are included, so every marker in the appendix resolves too; the report's `conflicts` array still records every pair, including those whose other side was omitted. Sections with no entries are omitted.
+
+**Token estimation** is an intentionally cheap approximation: each maximal run of ASCII letters, digits, and `_` counts as one token; every non-ASCII code point (CJK characters and punctuation included) counts as one token; ASCII whitespace and punctuation count as zero. The applied budget and the estimate after assembly are echoed as `context.budget` and `context.estimated_tokens`; `estimated_tokens` never exceeds `budget`.
+
+### 上下文边界
+
+- **Greedy, not optimal.** A block that does not fit is skipped and later, smaller blocks may still be included. The result is deterministic but not a knapsack optimum.
+- **Estimates are not a tokenizer.** ASCII punctuation, repeated spaces, and tokenizer-specific merges are not modeled; leave headroom when the downstream model has a hard limit.
+- **Untrusted text is verbatim.** Evidence text is not escaped, so a literal `[n]` inside a chunk is indistinguishable from a marker. Citation resolution is defined by the `citations` table, not by scanning raw text.
+- **Only included evidence is disclosed.** Risks and conflicts involving omitted evidence stay in the report (`evidence`, `conflicts`), not in the context.
+- **Duplicate sources are kept distinct.** Two chunks from the same URI each get their own marker and citation; they are never merged.
+- **`top_k` precedes the budget.** `evidence` is truncated first; `context.omitted_count` counts budget omissions only, not `top_k` removals.
+- **Empty titles render as `(untitled)`.** The citation keeps the raw empty title.
+
 ## Library
 
 The scan core (`src/`) is a pure library usable from any MoonBit CLI or FFI target (native / wasm-gc / js) — only `cmd/main` touches the filesystem. Import as `ShunjunGu/moon-trust`.
@@ -135,13 +173,18 @@ let report = @src.scan(
   { ..@src.ScanConfig::default(), risk_policy: Some(@src.RiskPolicy::Drop) },
   candidates,
 )
+// The generator-ready text and its citation table:
+let context = report.context
 ```
 
 ## Tests
 
 ```console
 $ moon test --target all
-Total tests: 85, passed: 85, failed: 0.
+Total tests: 108, passed: 108, failed: 0. [wasm]
+Total tests: 108, passed: 108, failed: 0. [wasm-gc]
+Total tests: 108, passed: 108, failed: 0. [js]
+Total tests: 108, passed: 108, failed: 0. [native]
 ```
 
 ## License

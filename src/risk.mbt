@@ -26,15 +26,20 @@ pub extend RiskSeverity with @moonbitlang/core/debug.Debug::{to_repr}
 pub extend RiskSeverity with Eq::{not_equal, equal}
 
 ///|
+/// Lowercase severity label, shared by JSON serialization and the context
+/// appendix so the vocabulary cannot drift between the two.
+fn severity_label(severity : RiskSeverity) -> String {
+  match severity {
+    Low => "low"
+    Medium => "medium"
+    High => "high"
+  }
+}
+
+///|
 /// Lowercase severity name in JSON.
 pub impl @json.ToJson for RiskSeverity with fn to_json(self : RiskSeverity) -> @json.Json {
-  @json.Json::string(
-    match self {
-      Low => "low"
-      Medium => "medium"
-      High => "high"
-    },
-  )
+  @json.Json::string(severity_label(self))
 }
 
 ///|

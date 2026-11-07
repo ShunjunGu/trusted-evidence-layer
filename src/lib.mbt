@@ -42,8 +42,10 @@ pub(all) struct CandidateFile {
 ///|
 /// Scan configuration. `top_k` optionally truncates the evidence list; the
 /// weights steer the trust blend; the risk knobs select the isolation policy,
-/// scale its penalty, gate the blocked flag, and restrict the rule set; and
-/// `conflict_weight` scales the rerank penalty for conflicting evidence.
+/// scale its penalty, gate the blocked flag, and restrict the rule set;
+/// `conflict_weight` scales the rerank penalty for conflicting evidence; and
+/// `context_budget` caps the approximate token budget of the assembled
+/// evidence context (absent means the default 512).
 /// Every field is optional: absent keys fall back to deterministic defaults,
 /// and every absent key is omitted from the echo so a default config still
 /// serializes as `{}`.
@@ -58,6 +60,7 @@ pub(all) struct ScanConfig {
   block_on_high : Bool?
   enabled_rules : Array[String]?
   conflict_weight : Double?
+  context_budget : Int32?
 }
 
 ///|
@@ -132,17 +135,19 @@ pub(all) struct Diagnostics {
 }
 
 ///|
-/// The result of a scan. `quarantined` preserves the audit trail of blocks
-/// removed by the drop policy; `blocked` is true only when the config asked
-/// for blocking and at least one high-severity finding exists (including
-/// findings on quarantined blocks). Serialization is byte-identical across
-/// repeated runs on identical inputs: fixed field order, no wall-clock or
-/// random data.
+/// The result of a scan. `context` is the budgeted text artifact for a
+/// downstream generator, with its citation table; `quarantined` preserves the
+/// audit trail of blocks removed by the drop policy; `blocked` is true only
+/// when the config asked for blocking and at least one high-severity finding
+/// exists (including findings on quarantined blocks). Serialization is
+/// byte-identical across repeated runs on identical inputs: fixed field
+/// order, no wall-clock or random data.
 #derive(ToJson, Eq)
 pub(all) struct ScanReport {
   query : String
   config : ScanConfig
   evidence : Array[Evidence]
+  context : EvidenceContext
   conflicts : Array[Conflict]
   quarantined : Array[QuarantinedBlock]
   blocked : Bool
@@ -163,6 +168,7 @@ pub impl Default for ScanConfig with fn default() {
     block_on_high: None,
     enabled_rules: None,
     conflict_weight: None,
+    context_budget: None,
   }
 }
 
@@ -258,8 +264,8 @@ pub fn parse_candidates(text : String) -> CandidateFile raise {
 /// wins), scan risk rules, isolate per policy, detect cross-document
 /// conflicts, score trust with the applied risk factor and consistency
 /// signal, stable selection sort by rerank score (retrieval score + trust −
-/// conflict penalty) descending / id ascending / original input order, then
-/// optional `top_k` truncation.
+/// conflict penalty) descending / id ascending / original input order,
+/// optional `top_k` truncation, then budgeted evidence-context assembly.
 pub fn scan(
   query : String,
   config : ScanConfig,
@@ -418,10 +424,16 @@ pub fn scan(
     Some(top_k) => take_first(all_evidence, top_k)
     None => all_evidence
   }
+  let context = build_context(
+    evidence,
+    conflicts,
+    resolve_context_budget(config),
+  )
   {
     query,
     config,
     evidence,
+    context,
     conflicts,
     quarantined,
     blocked,
@@ -442,6 +454,7 @@ pub fn scan(
         { name: "conflict", count: conflicts.length(), },
         { name: "sort", count: sorted_count, },
         { name: "topk", count: evidence.length(), },
+        { name: "context", count: context.included_count, },
       ],
     },
   }

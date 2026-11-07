@@ -44,7 +44,7 @@ pub extend CliOutcome with @moonbitlang/core/debug.Debug::{to_repr}
 
 ///|
 fn usage() -> String {
-  "usage: moon-trust scan <query> <candidates.json> [--top-k N] [--policy drop|mark|downrank] [--block-on-high] [--risk-weight W] [--conflict-weight W]"
+  "usage: moon-trust scan <query> <candidates.json> [--top-k N] [--policy drop|mark|downrank] [--block-on-high] [--risk-weight W] [--conflict-weight W] [--context-budget N]"
 }
 
 ///|
@@ -84,6 +84,7 @@ pub fn resolve(
   let mut block_on_high : Bool? = None
   let mut risk_weight : Double? = None
   let mut conflict_weight : Double? = None
+  let mut context_budget : Int32? = None
   let mut i = 4
   while i < args.length() {
     let token = args[i]
@@ -158,6 +159,21 @@ pub fn resolve(
         i = i + 2
         continue
       }
+      if token == "--context-budget" {
+        if i + 1 >= args.length() {
+          return invalid("missing value for --context-budget")
+        }
+        match parse_context_budget(args[i + 1]) {
+          Some(value) => context_budget = Some(value)
+          None =>
+            return invalid(
+              "--context-budget expects a non-negative integer, got: " +
+              args[i + 1],
+            )
+        }
+        i = i + 2
+        continue
+      }
       return invalid("unknown option: " + token)
     }
     return invalid("unexpected argument: " + token)
@@ -178,6 +194,7 @@ pub fn resolve(
       risk_weight,
       block_on_high,
       conflict_weight,
+      context_budget,
     },
     file.candidates,
   )
@@ -237,6 +254,14 @@ fn parse_conflict_weight(text : String) -> Double? {
       } else {
         None
       }
+    None => None
+  }
+}
+
+///|
+fn parse_context_budget(text : String) -> Int32? {
+  match parse_top_k(text) {
+    Some(value) => if value >= 0 { Some(value) } else { None }
     None => None
   }
 }

@@ -5,7 +5,7 @@
 ///|
 // The usage line, pinned here because tests assert the exact combined
 // output "moon-trust: <msg>\n<usage>" for every invalid outcome.
-const USE : String = "usage: moon-trust scan <query> <candidates.json> [--top-k N] [--policy drop|mark|downrank] [--block-on-high] [--risk-weight W] [--conflict-weight W]"
+const USE : String = "usage: moon-trust scan <query> <candidates.json> [--top-k N] [--policy drop|mark|downrank] [--block-on-high] [--risk-weight W] [--conflict-weight W] [--context-budget N]"
 
 ///|
 // Successful read: hands back the multi-candidate fixture regardless of path.
@@ -356,5 +356,50 @@ test "--risk-weight rejects missing, non-numeric, negative, and non-finite value
   assert_eq(
     @cli.resolve(zero, stub_ok).output,
     "moon-trust: --risk-weight expects a positive finite number, got: 0\n" + USE,
+  )
+}
+
+///|
+test "--context-budget flows into the config and the context" {
+  let args : Array[String] = [
+    "moon-trust", "scan", "hello", "c.json", "--context-budget", "40",
+  ]
+  let outcome = @cli.resolve(args, stub_ok)
+  assert_eq(outcome.code.to_int(), 0)
+  assert_true(outcome.output.contains("\"context_budget\":40"))
+  assert_true(outcome.output.contains("\"context\":{\"budget\":40,"))
+}
+
+///|
+test "--context-budget accepts zero and rejects bad values" {
+  let zero : Array[String] = [
+    "moon-trust", "scan", "hello", "c.json", "--context-budget", "0",
+  ]
+  let accepted = @cli.resolve(zero, stub_ok)
+  assert_eq(accepted.code.to_int(), 0)
+  assert_true(accepted.output.contains("\"context\":{\"budget\":0,"))
+  assert_true(accepted.output.contains("\"text\":\"\""))
+  let missing : Array[String] = [
+    "moon-trust", "scan", "hello", "c.json", "--context-budget",
+  ]
+  assert_eq(
+    @cli.resolve(missing, stub_ok).output,
+    "moon-trust: missing value for --context-budget\n" + USE,
+  )
+  let negative : Array[String] = [
+    "moon-trust", "scan", "hello", "c.json", "--context-budget", "-1",
+  ]
+  assert_eq(
+    @cli.resolve(negative, stub_ok).output,
+    "moon-trust: --context-budget expects a non-negative integer, got: -1\n" +
+    USE,
+  )
+  let text : Array[String] = [
+    "moon-trust", "scan", "hello", "c.json", "--context-budget", "abc",
+  ]
+  assert_eq(
+    @cli.resolve(text, stub_ok).output,
+    "moon-trust: --context-budget expects a non-negative integer, got: abc\n" +
+    USE,
   )
 }
