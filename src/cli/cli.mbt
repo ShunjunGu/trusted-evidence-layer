@@ -3,13 +3,15 @@
 // whole package compiles unchanged for native, wasm-gc, and js targets.
 
 ///|
-/// How a run ends: success with a report on stdout, invalid input (exit 1),
-/// or an operational failure such as an unreadable file (exit 2).
+/// How a run ends: success with a report on stdout (exit 0), invalid input
+/// (exit 1), an operational failure such as an unreadable file (exit 2), or
+/// a blocked scan that still prints its report (exit 3).
 #derive(Debug, Eq)
 pub(all) enum ExitCode {
   Success
   Invalid
   Operational
+  Blocked
 }
 
 ///|
@@ -24,6 +26,7 @@ pub fn ExitCode::to_int(self : ExitCode) -> Int32 {
     Success => 0
     Invalid => 1
     Operational => 2
+    Blocked => 3
   }
 }
 
@@ -41,7 +44,7 @@ pub extend CliOutcome with @moonbitlang/core/debug.Debug::{to_repr}
 
 ///|
 fn usage() -> String {
-  "usage: moon-trust scan <query> <candidates.json> [--top-k N]"
+  "usage: moon-trust scan <query> <candidates.json> [--top-k N] [--policy drop|mark|downrank] [--block-on-high] [--risk-weight W]"
 }
 
 ///|
@@ -77,6 +80,9 @@ pub fn resolve(
   let query = args[2]
   let path = args[3]
   let mut top_k : Int32? = None
+  let mut policy : @src.RiskPolicy? = None
+  let mut block_on_high : Bool? = None
+  let mut risk_weight : Double? = None
   let mut i = 4
   while i < args.length() {
     let token = args[i]
@@ -100,6 +106,42 @@ pub fn resolve(
         i = i + 2
         continue
       }
+      if token == "--policy" {
+        if i + 1 >= args.length() {
+          return invalid("missing value for --policy")
+        }
+        match parse_policy(args[i + 1]) {
+          Some(value) => policy = Some(value)
+          None =>
+            return invalid(
+              "unknown policy: " +
+              args[i + 1] +
+              " (expected drop, mark, or downrank)",
+            )
+        }
+        i = i + 2
+        continue
+      }
+      if token == "--block-on-high" {
+        block_on_high = Some(true)
+        i = i + 1
+        continue
+      }
+      if token == "--risk-weight" {
+        if i + 1 >= args.length() {
+          return invalid("missing value for --risk-weight")
+        }
+        match parse_risk_weight(args[i + 1]) {
+          Some(value) => risk_weight = Some(value)
+          None =>
+            return invalid(
+              "--risk-weight expects a non-negative finite number, got: " +
+              args[i + 1],
+            )
+        }
+        i = i + 2
+        continue
+      }
       return invalid("unknown option: " + token)
     }
     return invalid("unexpected argument: " + token)
@@ -113,10 +155,17 @@ pub fn resolve(
   }
   let report = @src.scan(
     query,
-    { ..@src.ScanConfig::default(), top_k, },
+    {
+      ..@src.ScanConfig::default(),
+      top_k,
+      risk_policy: policy,
+      risk_weight,
+      block_on_high,
+    },
     file.candidates,
   )
-  { output: report.to_json().stringify(), code: Success, }
+  let code = if report.blocked { Blocked } else { Success }
+  { output: report.to_json().stringify(), code, }
 }
 
 ///|
@@ -130,5 +179,31 @@ fn is_option(token : String) -> Bool {
 fn parse_top_k(text : String) -> Int32? {
   try @string.parse_int(text) |> Some catch {
     _ => None
+  }
+}
+
+///|
+fn parse_policy(text : String) -> @src.RiskPolicy? {
+  match text {
+    "drop" => Some(@src.RiskPolicy::Drop)
+    "mark" => Some(@src.RiskPolicy::Mark)
+    "downrank" => Some(@src.RiskPolicy::Downrank)
+    _ => None
+  }
+}
+
+///|
+fn parse_risk_weight(text : String) -> Double? {
+  let parsed : Double? = try @string.parse_double(text) |> Some catch {
+    _ => None
+  }
+  match parsed {
+    Some(value) =>
+      if value.is_finite() && value >= 0.0 {
+        Some(value)
+      } else {
+        None
+      }
+    None => None
   }
 }

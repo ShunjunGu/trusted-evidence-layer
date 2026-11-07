@@ -41,22 +41,31 @@ pub(all) struct CandidateFile {
 
 ///|
 /// Scan configuration. `top_k` optionally truncates the evidence list; the
-/// weights steer the trust blend. Weights are optional: absent keys fall
-/// back to deterministic defaults, and every absent key is omitted from the
-/// echo so a default config still serializes as `{}`.
+/// weights steer the trust blend; the risk knobs select the isolation policy,
+/// scale its penalty, gate the blocked flag, and restrict the rule set.
+/// Every field is optional: absent keys fall back to deterministic defaults,
+/// and every absent key is omitted from the echo so a default config still
+/// serializes as `{}`.
 #derive(ToJson, Eq)
 pub(all) struct ScanConfig {
   top_k : Int32?
   source_weight : Double?
   content_weight : Double?
   trust_weight : Double?
+  risk_policy : RiskPolicy?
+  risk_weight : Double?
+  block_on_high : Bool?
+  enabled_rules : Array[String]?
 }
 
 ///|
 /// Trust breakdown: the two weighted components plus every sub-signal
 /// behind them. Components blend trust; sub-signals only explain it.
 /// `template_ratio` is the raw marker share (higher is worse); the other
-/// sub-signals are quality signals in [0, 1] (higher is better).
+/// sub-signals are quality signals in [0, 1] (higher is better). `risk` is
+/// the factor actually applied to the blend: 1.0 means no penalty (no
+/// findings or a non-penalizing policy), lower values mean risk scoring
+/// reduced the score.
 #derive(ToJson, Eq)
 pub(all) struct TrustBreakdown {
   source_score : Double
@@ -66,6 +75,7 @@ pub(all) struct TrustBreakdown {
   length : Double
   template_ratio : Double
   consistency : Double
+  risk : Double
 }
 
 ///|
@@ -79,8 +89,8 @@ pub(all) struct TrustDetail {
 
 ///|
 /// One ordered 候选块 turned into evidence. Mirrors the input candidate and
-/// additionally reports the trust info and the rerank score it was ordered
-/// by. Risk findings and conflict references join here in later tickets.
+/// additionally reports the risk findings, the trust info, and the rerank
+/// score it was ordered by. Conflict references join here in a later ticket.
 #derive(ToJson, Eq)
 pub(all) struct Evidence {
   id : String
@@ -88,6 +98,7 @@ pub(all) struct Evidence {
   source : SourceMeta
   retrieval_score : Double
   span : Span?
+  risk_findings : Array[RiskFinding]
   rerank_score : Double
   trust : TrustDetail
 }
@@ -106,18 +117,26 @@ pub(all) struct StageRecord {
 pub(all) struct Diagnostics {
   candidate_count : Int32
   duplicate_id_count : Int32
+  risk_finding_count : Int32
+  quarantined_count : Int32
   output_count : Int32
   stages : Array[StageRecord]
 }
 
 ///|
-/// The result of a scan. Serialization is byte-identical across repeated
-/// runs on identical inputs: fixed field order, no wall-clock or random data.
+/// The result of a scan. `quarantined` preserves the audit trail of blocks
+/// removed by the drop policy; `blocked` is true only when the config asked
+/// for blocking and at least one high-severity finding exists (including
+/// findings on quarantined blocks). Serialization is byte-identical across
+/// repeated runs on identical inputs: fixed field order, no wall-clock or
+/// random data.
 #derive(ToJson, Eq)
 pub(all) struct ScanReport {
   query : String
   config : ScanConfig
   evidence : Array[Evidence]
+  quarantined : Array[QuarantinedBlock]
+  blocked : Bool
   diagnostics : Diagnostics
 }
 
@@ -130,6 +149,10 @@ pub impl Default for ScanConfig with fn default() {
     source_weight: None,
     content_weight: None,
     trust_weight: None,
+    risk_policy: None,
+    risk_weight: None,
+    block_on_high: None,
+    enabled_rules: None,
   }
 }
 
@@ -221,10 +244,11 @@ pub fn parse_candidates(text : String) -> CandidateFile raise {
 }
 
 ///|
-/// Run the deterministic scan: dedupe (first occurrence in input order
-/// wins), score trust per kept candidate, stable selection sort by rerank
-/// score (retrieval score + trust) descending / id ascending / original
-/// input order, then optional `top_k` truncation.
+/// Run the deterministic pipeline: dedupe (first occurrence in input order
+/// wins), scan risk rules, isolate per policy, score trust with the applied
+/// risk factor, stable selection sort by rerank score (retrieval score +
+/// trust) descending / id ascending / original input order, then optional
+/// `top_k` truncation.
 pub fn scan(
   query : String,
   config : ScanConfig,
@@ -250,11 +274,78 @@ pub fn scan(
     Some(weight) => finite_or(weight, 1.0)
     None => 1.0
   }
-  let scored : Array[Entry] = []
+  // Downrank is the safe default: findings lower the score unless the caller
+  // explicitly asks for annotation-only or removal.
+  let policy = match config.risk_policy {
+    Some(policy) => policy
+    None => RiskPolicy::Downrank
+  }
+  let drop_policy = match policy {
+    RiskPolicy::Drop => true
+    _ => false
+  }
+  let downrank_policy = match policy {
+    RiskPolicy::Downrank => true
+    _ => false
+  }
+  let risk_weight = match config.risk_weight {
+    Some(weight) => finite_or(weight, 1.0)
+    None => 1.0
+  }
+  let block_on_high = match config.block_on_high {
+    Some(flag) => flag
+    None => false
+  }
+  let rules = make_rule_set()
+  let scanned : Array[Scanned] = []
+  let mut risk_finding_count = 0
+  let mut risky_count = 0
+  let mut blocked = false
   for index, candidate in kept {
-    let trust = score_trust(candidate, source_weight, content_weight)
-    let rerank = candidate.retrieval_score + trust_weight * trust.score
-    scored.push({ candidate, index, trust, rerank, })
+    let findings = scan_risk_text(candidate.text, rules, config.enabled_rules)
+    risk_finding_count = risk_finding_count + findings.length()
+    if findings.length() > 0 {
+      risky_count = risky_count + 1
+    }
+    let has_high = match highest_severity(findings) {
+      Some(RiskSeverity::High) => true
+      _ => false
+    }
+    if block_on_high && has_high {
+      blocked = true
+    }
+    scanned.push({ candidate, index, findings, has_high, })
+  }
+  let quarantined : Array[QuarantinedBlock] = []
+  let survivors : Array[Scanned] = []
+  for entry in scanned {
+    if drop_policy && entry.has_high {
+      quarantined.push(to_quarantined(entry))
+    } else {
+      survivors.push(entry)
+    }
+  }
+  let scored : Array[Entry] = []
+  for entry in survivors {
+    let factor = if downrank_policy {
+      risk_factor(entry.findings, risk_weight)
+    } else {
+      1.0
+    }
+    let trust = score_trust(
+      entry.candidate,
+      source_weight,
+      content_weight,
+      factor,
+    )
+    let rerank = entry.candidate.retrieval_score + trust_weight * trust.score
+    scored.push({
+      candidate: entry.candidate,
+      index: entry.index,
+      trust,
+      rerank,
+      findings: entry.findings,
+    })
   }
   let ordered = order_candidates(scored)
   let all_evidence : Array[Evidence] = []
@@ -270,17 +361,47 @@ pub fn scan(
     query,
     config,
     evidence,
+    quarantined,
+    blocked,
     diagnostics: {
       candidate_count,
       duplicate_id_count,
+      risk_finding_count,
+      quarantined_count: quarantined.length(),
       output_count: evidence.length(),
       stages: [
         { name: "ingest", count: candidate_count, },
         { name: "dedupe", count: kept.length(), },
+        { name: "risk", count: risky_count, },
+        { name: "isolate", count: survivors.length(), },
         { name: "sort", count: sorted_count, },
         { name: "topk", count: evidence.length(), },
       ],
     },
+  }
+}
+
+///|
+/// A scanned candidate before isolation: its findings and whether any of
+/// them is high severity.
+priv struct Scanned {
+  candidate : Candidate
+  index : Int32
+  findings : Array[RiskFinding]
+  has_high : Bool
+}
+
+///|
+/// The audit-trail shape of a block removed by the drop policy.
+fn to_quarantined(entry : Scanned) -> QuarantinedBlock {
+  {
+    id: entry.candidate.id,
+    text: entry.candidate.text,
+    source: entry.candidate.source,
+    retrieval_score: entry.candidate.retrieval_score,
+    span: entry.candidate.span,
+    findings: entry.findings,
+    reason: "dropped by policy: high-severity risk",
   }
 }
 
@@ -292,6 +413,7 @@ priv struct Entry {
   trust : TrustDetail
   rerank : Double
   index : Int32
+  findings : Array[RiskFinding]
 }
 
 ///|
@@ -371,14 +493,15 @@ fn resolve_weights(config : ScanConfig) -> (Double, Double) {
 }
 
 ///|
-/// Trust score for one 候选块: trust_score = 来源分项 + 内容分项 weighted
-/// blend, normalized to source/content weights summing to 1, clamped to
-/// [0, 1]. Every sub-signal is clamped independently, so the score stays
-/// in range for any input, including degenerate metadata.
+/// Trust score for one 候选块: trust_score = (来源分项 + 内容分项 weighted
+/// blend) × risk factor, normalized to source/content weights summing to 1,
+/// clamped to [0, 1]. Every sub-signal is clamped independently, so the
+/// score stays in range for any input, including degenerate metadata.
 fn score_trust(
   candidate : Candidate,
   source_weight : Double,
   content_weight : Double,
+  risk : Double,
 ) -> TrustDetail {
   let metadata = metadata_completeness(candidate.source)
   let scheme = source_type(candidate.source.uri)
@@ -389,7 +512,7 @@ fn score_trust(
   let consistency = consistency_score(candidate.text)
   let content_score = (length + template + consistency) / 3.0
   let raw = source_weight * source_score + content_weight * content_score
-  let score = if raw < 0.0 { 0.0 } else if raw > 1.0 { 1.0 } else { raw }
+  let score = clamp_unit(raw * risk)
   {
     score,
     breakdown: {
@@ -400,6 +523,7 @@ fn score_trust(
       length,
       template_ratio,
       consistency,
+      risk,
     },
   }
 }
@@ -511,6 +635,7 @@ fn to_evidence(entry : Entry) -> Evidence {
     source: entry.candidate.source,
     retrieval_score: entry.candidate.retrieval_score,
     span: entry.candidate.span,
+    risk_findings: entry.findings,
     rerank_score: entry.rerank,
     trust: entry.trust,
   }

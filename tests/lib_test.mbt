@@ -15,6 +15,17 @@ fn render(report : @src.ScanReport) -> String {
 }
 
 ///|
+// The count recorded for one named pipeline stage.
+fn stage_count(report : @src.ScanReport, name : String) -> Int32 {
+  for stage in report.diagnostics.stages {
+    if stage.name == name {
+      return stage.count
+    }
+  }
+  abort("missing stage: " + name)
+}
+
+///|
 test "scan output is byte-identical across repeated runs" {
   let first = render(
     @src.scan(
@@ -42,7 +53,7 @@ test "empty scan output is the frozen skeleton shape" {
   )
   assert_eq(
     render(report),
-    "{\"query\":\"hello\",\"config\":{},\"evidence\":[],\"diagnostics\":{\"candidate_count\":0,\"duplicate_id_count\":0,\"output_count\":0,\"stages\":[{\"name\":\"ingest\",\"count\":0},{\"name\":\"dedupe\",\"count\":0},{\"name\":\"sort\",\"count\":0},{\"name\":\"topk\",\"count\":0}]}}",
+    "{\"query\":\"hello\",\"config\":{},\"evidence\":[],\"quarantined\":[],\"blocked\":false,\"diagnostics\":{\"candidate_count\":0,\"duplicate_id_count\":0,\"risk_finding_count\":0,\"quarantined_count\":0,\"output_count\":0,\"stages\":[{\"name\":\"ingest\",\"count\":0},{\"name\":\"dedupe\",\"count\":0},{\"name\":\"risk\",\"count\":0},{\"name\":\"isolate\",\"count\":0},{\"name\":\"sort\",\"count\":0},{\"name\":\"topk\",\"count\":0}]}}",
   )
 }
 
@@ -144,8 +155,7 @@ test "top-k truncates deterministic order deterministically" {
   assert_eq(report.evidence[0].id, "t1")
   assert_eq(report.evidence[1].id, "a2")
   assert_eq(report.diagnostics.output_count, 2)
-  assert_eq(report.diagnostics.stages[3].name, "topk")
-  assert_eq(report.diagnostics.stages[3].count, 2)
+  assert_eq(stage_count(report, "topk"), 2)
 }
 
 ///|

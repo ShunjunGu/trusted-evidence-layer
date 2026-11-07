@@ -5,12 +5,18 @@
 ///|
 // The usage line, pinned here because tests assert the exact combined
 // output "moon-trust: <msg>\n<usage>" for every invalid outcome.
-const USE : String = "usage: moon-trust scan <query> <candidates.json> [--top-k N]"
+const USE : String = "usage: moon-trust scan <query> <candidates.json> [--top-k N] [--policy drop|mark|downrank] [--block-on-high] [--risk-weight W]"
 
 ///|
 // Successful read: hands back the multi-candidate fixture regardless of path.
 fn stub_ok(_ : String) -> Result[String, String] {
   Ok(MULTI)
+}
+
+///|
+// Successful read of the injected corpus.
+fn stub_injected(_ : String) -> Result[String, String] {
+  Ok(INJECTED)
 }
 
 ///|
@@ -161,8 +167,128 @@ test "identical invocations render byte-identical output" {
 }
 
 ///|
-test "exit codes map to 0, 1, and 2" {
+test "exit codes map to 0, 1, 2, and 3" {
   assert_eq(@cli.Success.to_int(), 0)
   assert_eq(@cli.Invalid.to_int(), 1)
   assert_eq(@cli.Operational.to_int(), 2)
+  assert_eq(@cli.Blocked.to_int(), 3)
+}
+
+///|
+test "--policy flows into the report and drop quarantines high-risk blocks" {
+  let args : Array[String] = [
+    "moon-trust", "scan", "hello", "c.json", "--policy", "drop",
+  ]
+  let outcome = @cli.resolve(args, stub_injected)
+  assert_eq(outcome.code.to_int(), 0)
+  assert_true(outcome.output.contains("\"risk_policy\":\"drop\""))
+  assert_true(outcome.output.contains("\"quarantined\":[{"))
+  assert_true(outcome.output.contains("\"blocked\":false"))
+}
+
+///|
+test "--policy accepts mark and downrank" {
+  let mark_args : Array[String] = [
+    "moon-trust", "scan", "hello", "c.json", "--policy", "mark",
+  ]
+  let mark = @cli.resolve(mark_args, stub_injected)
+  assert_eq(mark.code.to_int(), 0)
+  assert_true(mark.output.contains("\"risk_policy\":\"mark\""))
+  assert_true(mark.output.contains("\"quarantined\":[]"))
+  let downrank_args : Array[String] = [
+    "moon-trust", "scan", "hello", "c.json", "--policy", "downrank",
+  ]
+  let downrank = @cli.resolve(downrank_args, stub_injected)
+  assert_eq(downrank.code.to_int(), 0)
+  assert_true(downrank.output.contains("\"risk_policy\":\"downrank\""))
+}
+
+///|
+test "--policy without a value is rejected" {
+  let args : Array[String] = [
+    "moon-trust", "scan", "hello", "c.json", "--policy",
+  ]
+  let outcome = @cli.resolve(args, stub_ok)
+  assert_eq(outcome.output, "moon-trust: missing value for --policy\n" + USE)
+  assert_eq(outcome.code.to_int(), 1)
+}
+
+///|
+test "unknown policies are rejected" {
+  let args : Array[String] = [
+    "moon-trust", "scan", "hello", "c.json", "--policy", "block",
+  ]
+  let outcome = @cli.resolve(args, stub_ok)
+  assert_eq(
+    outcome.output,
+    "moon-trust: unknown policy: block (expected drop, mark, or downrank)\n" +
+    USE,
+  )
+  assert_eq(outcome.code.to_int(), 1)
+}
+
+///|
+test "--block-on-high with high-severity risk exits 3 but still prints the report" {
+  let args : Array[String] = [
+    "moon-trust", "scan", "hello", "c.json", "--policy", "drop", "--block-on-high",
+  ]
+  let outcome = @cli.resolve(args, stub_injected)
+  assert_eq(outcome.code.to_int(), 3)
+  assert_true(outcome.output.contains("\"blocked\":true"))
+  assert_true(outcome.output.contains("\"quarantined\":[{"))
+}
+
+///|
+test "--block-on-high on clean input exits 0" {
+  let args : Array[String] = [
+    "moon-trust", "scan", "hello", "c.json", "--block-on-high",
+  ]
+  let outcome = @cli.resolve(args, stub_ok)
+  assert_eq(outcome.code.to_int(), 0)
+  assert_true(outcome.output.contains("\"blocked\":false"))
+}
+
+///|
+test "--risk-weight flows into the report config" {
+  let args : Array[String] = [
+    "moon-trust", "scan", "hello", "c.json", "--risk-weight", "0.5",
+  ]
+  let outcome = @cli.resolve(args, stub_injected)
+  assert_eq(outcome.code.to_int(), 0)
+  assert_true(outcome.output.contains("\"risk_weight\":0.5"))
+}
+
+///|
+test "--risk-weight rejects missing, non-numeric, negative, and non-finite values" {
+  let missing : Array[String] = [
+    "moon-trust", "scan", "hello", "c.json", "--risk-weight",
+  ]
+  assert_eq(
+    @cli.resolve(missing, stub_ok).output,
+    "moon-trust: missing value for --risk-weight\n" + USE,
+  )
+  let nan : Array[String] = [
+    "moon-trust", "scan", "hello", "c.json", "--risk-weight", "NaN",
+  ]
+  assert_eq(
+    @cli.resolve(nan, stub_ok).output,
+    "moon-trust: --risk-weight expects a non-negative finite number, got: NaN\n" +
+    USE,
+  )
+  let negative : Array[String] = [
+    "moon-trust", "scan", "hello", "c.json", "--risk-weight", "-1",
+  ]
+  assert_eq(
+    @cli.resolve(negative, stub_ok).output,
+    "moon-trust: --risk-weight expects a non-negative finite number, got: -1\n" +
+    USE,
+  )
+  let text : Array[String] = [
+    "moon-trust", "scan", "hello", "c.json", "--risk-weight", "abc",
+  ]
+  assert_eq(
+    @cli.resolve(text, stub_ok).output,
+    "moon-trust: --risk-weight expects a non-negative finite number, got: abc\n" +
+    USE,
+  )
 }
