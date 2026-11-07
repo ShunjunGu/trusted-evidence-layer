@@ -44,7 +44,7 @@ pub extend CliOutcome with @moonbitlang/core/debug.Debug::{to_repr}
 
 ///|
 fn usage() -> String {
-  "usage: moon-trust scan <query> <candidates.json> [--top-k N] [--policy drop|mark|downrank] [--block-on-high] [--risk-weight W]"
+  "usage: moon-trust scan <query> <candidates.json> [--top-k N] [--policy drop|mark|downrank] [--block-on-high] [--risk-weight W] [--conflict-weight W]"
 }
 
 ///|
@@ -83,6 +83,7 @@ pub fn resolve(
   let mut policy : @src.RiskPolicy? = None
   let mut block_on_high : Bool? = None
   let mut risk_weight : Double? = None
+  let mut conflict_weight : Double? = None
   let mut i = 4
   while i < args.length() {
     let token = args[i]
@@ -142,6 +143,21 @@ pub fn resolve(
         i = i + 2
         continue
       }
+      if token == "--conflict-weight" {
+        if i + 1 >= args.length() {
+          return invalid("missing value for --conflict-weight")
+        }
+        match parse_conflict_weight(args[i + 1]) {
+          Some(value) => conflict_weight = Some(value)
+          None =>
+            return invalid(
+              "--conflict-weight expects a non-negative finite number, got: " +
+              args[i + 1],
+            )
+        }
+        i = i + 2
+        continue
+      }
       return invalid("unknown option: " + token)
     }
     return invalid("unexpected argument: " + token)
@@ -161,6 +177,7 @@ pub fn resolve(
       risk_policy: policy,
       risk_weight,
       block_on_high,
+      conflict_weight,
     },
     file.candidates,
   )
@@ -200,6 +217,22 @@ fn parse_risk_weight(text : String) -> Double? {
   match parsed {
     Some(value) =>
       if value.is_finite() && value > 0.0 {
+        Some(value)
+      } else {
+        None
+      }
+    None => None
+  }
+}
+
+///|
+fn parse_conflict_weight(text : String) -> Double? {
+  let parsed : Double? = try @string.parse_double(text) |> Some catch {
+    _ => None
+  }
+  match parsed {
+    Some(value) =>
+      if value.is_finite() && value >= 0.0 {
         Some(value)
       } else {
         None

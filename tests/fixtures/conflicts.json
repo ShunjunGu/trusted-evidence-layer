@@ -1,0 +1,104 @@
+{
+  "candidates": [
+    {
+      "id": "a",
+      "text": "France population is 68 million. Tax rate is 20%.",
+      "source": {
+        "uri": "https://example.com/a",
+        "title": "France fact sheet",
+        "fetched_at": "2026-11-05T00:00:00Z"
+      },
+      "retrieval_score": 0.9
+    },
+    {
+      "id": "b",
+      "text": "France population: 67 million. Tax rate: 21%.",
+      "source": {
+        "uri": "https://example.com/b",
+        "title": "France fact sheet",
+        "fetched_at": "2026-11-05T00:00:00Z"
+      },
+      "retrieval_score": 0.85
+    },
+    {
+      "id": "c",
+      "text": "France population is 68 million. Tax rate is 20%.",
+      "source": {
+        "uri": "https://example.com/c",
+        "title": "France fact sheet",
+        "fetched_at": "2026-11-05T00:00:00Z"
+      },
+      "retrieval_score": 0.8
+    },
+    {
+      "id": "distance-km",
+      "text": "France distance is 10 km.",
+      "source": {
+        "uri": "https://example.com/km",
+        "title": "France fact sheet",
+        "fetched_at": "2026-11-05T00:00:00Z"
+      },
+      "retrieval_score": 0.7
+    },
+    {
+      "id": "distance-mi",
+      "text": "France distance is 10 miles.",
+      "source": {
+        "uri": "https://example.com/mi",
+        "title": "France fact sheet",
+        "fetched_at": "2026-11-05T00:00:00Z"
+      },
+      "retrieval_score": 0.7
+    },
+    {
+      "id": "cn-a",
+      "text": "法国人口：6800万。税率：20%。",
+      "source": {
+        "uri": "https://example.com/cn-a",
+        "title": "法国资料",
+        "fetched_at": "2026-11-05T00:00:00Z"
+      },
+      "retrieval_score": 0.75
+    },
+    {
+      "id": "cn-b",
+      "text": "法国人口：6700万。税率：21%。",
+      "source": {
+        "uri": "https://example.com/cn-b",
+        "title": "法国资料",
+        "fetched_at": "2026-11-05T00:00:00Z"
+      },
+      "retrieval_score": 0.7
+    },
+    {
+      "id": "date-a",
+      "text": "Effective date is 2024-03-01.",
+      "source": {
+        "uri": "https://example.com/date-a",
+        "title": "Policy schedule",
+        "fetched_at": "2026-11-05T00:00:00Z"
+      },
+      "retrieval_score": 0.65
+    },
+    {
+      "id": "date-b",
+      "text": "Effective date：2024年4月1日。",
+      "source": {
+        "uri": "https://example.com/date-b",
+        "title": "Policy schedule",
+        "fetched_at": "2026-11-05T00:00:00Z"
+      },
+      "retrieval_score": 0.6
+    },
+    {
+      "id": "clean",
+      "text": "Paris is the capital of France.",
+      "source": {
+        "uri": "https://example.com/clean",
+        "title": "France fact sheet",
+        "fetched_at": "2026-11-05T00:00:00Z"
+      },
+      "retrieval_score": 0.6
+    }
+  ]
+}

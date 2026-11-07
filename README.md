@@ -1,6 +1,6 @@
 # moon-trust
 
-A **deterministic trusted-evidence layer** between retrievers and generators: every scan turns an untrusted retrieval feed into a single-line, JSON-serializable report — snapshot of the query and config, risk findings per block, quarantine audit trail, evidence re-ranked by retrieval score plus an explainable trust score, and diagnostics — and two runs on identical inputs produce **byte-identical** output.
+A **deterministic trusted-evidence layer** between retrievers and generators: every scan turns an untrusted retrieval feed into a single-line, JSON-serializable report — snapshot of the query and config, risk findings per block, explicit cross-document conflicts, quarantine audit trail, evidence re-ranked by retrieval score plus an explainable trust score minus conflict penalties, and diagnostics — and two runs on identical inputs produce **byte-identical** output.
 
 ## Install
 
@@ -22,10 +22,10 @@ The native binary lives under `_build/native/debug/build/cmd/main/main.exe`:
 
 ```console
 $ _build/native/debug/build/cmd/main/main.exe scan hello tests/fixtures/multi.json
-{"query":"hello","config":{},"evidence":[{"id":"t1","text":"first","source":{"uri":"https://example.com/a","title":"Doc A","fetched_at":"2026-11-01T00:00:00Z"},"retrieval_score":0.95,"span":{"start":0,"end":12},"risk_findings":[],"rerank_score":1.7416666666666667,"trust":{"score":0.7916666666666667,"breakdown":{"source_score":0.875,"content_score":0.7083333333333334,"metadata":0.75,"source_type":1,"length":0.125,"template_ratio":0,"consistency":1,"risk":1}}},{"id":"a2","text":"second","source":{"uri":"s3://bucket/b","title":"Doc B","fetched_at":"2026-11-02T00:00:00Z","hint":"curated"},"retrieval_score":0.8,"risk_findings":[],"rerank_score":1.6083333333333334,"trust":{"score":0.8083333333333333,"breakdown":{"source_score":0.9,"content_score":0.7166666666666667,"metadata":1,"source_type":0.8,"length":0.15,"template_ratio":0,"consistency":1,"risk":1}}},{"id":"b2","text":"third","source":{"uri":"file:///c/d.txt","title":"Doc C","fetched_at":"2026-11-03T00:00:00Z"},"retrieval_score":0.4,"risk_findings":[],"rerank_score":1.0416666666666665,"trust":{"score":0.6416666666666666,"breakdown":{"source_score":0.575,"content_score":0.7083333333333334,"metadata":0.75,"source_type":0.4,"length":0.125,"template_ratio":0,"consistency":1,"risk":1}}}],"quarantined":[],"blocked":false,"diagnostics":{"candidate_count":3,"duplicate_id_count":0,"unknown_rule_ids":[],"risk_finding_count":0,"quarantined_count":0,"output_count":3,"stages":[{"name":"ingest","count":3},{"name":"dedupe","count":3},{"name":"risk","count":0},{"name":"isolate","count":3},{"name":"sort","count":3},{"name":"topk","count":3}]}}
+{"query":"hello","config":{},"evidence":[{"id":"t1","text":"first","source":{"uri":"https://example.com/a","title":"Doc A","fetched_at":"2026-11-01T00:00:00Z"},"retrieval_score":0.95,"span":{"start":0,"end":12},"risk_findings":[],"conflict_ids":[],"conflict_penalty":0,"rerank_score":1.7416666666666667,"trust":{"score":0.7916666666666667,"breakdown":{"source_score":0.875,"content_score":0.7083333333333334,"metadata":0.75,"source_type":1,"length":0.125,"template_ratio":0,"consistency":1,"risk":1}}},{"id":"a2","text":"second","source":{"uri":"s3://bucket/b","title":"Doc B","fetched_at":"2026-11-02T00:00:00Z","hint":"curated"},"retrieval_score":0.8,"risk_findings":[],"conflict_ids":[],"conflict_penalty":0,"rerank_score":1.6083333333333334,"trust":{"score":0.8083333333333333,"breakdown":{"source_score":0.9,"content_score":0.7166666666666667,"metadata":1,"source_type":0.8,"length":0.15,"template_ratio":0,"consistency":1,"risk":1}}},{"id":"b2","text":"third","source":{"uri":"file:///c/d.txt","title":"Doc C","fetched_at":"2026-11-03T00:00:00Z"},"retrieval_score":0.4,"risk_findings":[],"conflict_ids":[],"conflict_penalty":0,"rerank_score":1.0416666666666665,"trust":{"score":0.6416666666666666,"breakdown":{"source_score":0.575,"content_score":0.7083333333333334,"metadata":0.75,"source_type":0.4,"length":0.125,"template_ratio":0,"consistency":1,"risk":1}}}],"conflicts":[],"quarantined":[],"blocked":false,"diagnostics":{"candidate_count":3,"duplicate_id_count":0,"unknown_rule_ids":[],"risk_finding_count":0,"quarantined_count":0,"conflict_count":0,"output_count":3,"stages":[{"name":"ingest","count":3},{"name":"dedupe","count":3},{"name":"risk","count":0},{"name":"isolate","count":3},{"name":"conflict","count":0},{"name":"sort","count":3},{"name":"topk","count":3}]}}
 ```
 
-Evidence is ordered by `rerank_score = retrieval_score + trust_weight × trust.score` (descending), with ties broken by id ascending. Trust is an explainable heuristic in `[0, 1]`: it blends source signals (metadata completeness, URI scheme) with content signals (length, raw template-marker share, evidence consistency), then multiplies by the risk factor reported as `trust.breakdown.risk`. The two provenance/content weights default to 0.5/0.5 and `trust_weight` defaults to 1.0; library callers can override them via `ScanConfig`, and non-finite values fall back to those defaults.
+Evidence is ordered by `rerank_score = retrieval_score + trust_weight × trust.score − conflict_penalty` (descending), with ties broken by id ascending. Trust is an explainable heuristic in `[0, 1]`: it blends source signals (metadata completeness, URI scheme) with content signals (length, raw template-marker share, cross-document consistency), then multiplies by the risk factor reported as `trust.breakdown.risk`. The two provenance/content weights default to 0.5/0.5, `trust_weight` defaults to 1.0, and `conflict_weight` defaults to 0.5; library callers can override them via `ScanConfig`, and non-finite values fall back to those defaults.
 
 Optional flags:
 
@@ -33,6 +33,7 @@ Optional flags:
 - `--policy drop|mark|downrank` selects the isolation policy (default `downrank`).
 - `--block-on-high` sets `blocked: true` and makes the CLI exit `3` when any high-severity finding exists — including findings on blocks the drop policy removed.
 - `--risk-weight W` scales the risk penalty with a positive finite number (default `1.0`; `0` is rejected).
+- `--conflict-weight W` scales the per-conflict rerank penalty with a non-negative finite number (default `0.5`; `0` disables the extra rerank penalty but keeps the consistency signal).
 
 ```console
 $ _build/native/debug/build/cmd/main/main.exe scan hello tests/fixtures/injected.json --policy drop --block-on-high
@@ -75,7 +76,7 @@ Isolation policies:
 
 Library callers can additionally set `enabled_rules: Some([...])` in `ScanConfig` to restrict scanning to specific rule ids; an absent list enables the whole registry and an empty list disables it. Unknown ids are ignored by the scanner but echoed in `diagnostics.unknown_rule_ids`, so a typo cannot silently disable a rule.
 
-`diagnostics` reports `risk_finding_count` (all findings), `quarantined_count`, `output_count`, and `unknown_rule_ids`. The stage counters are `ingest` (input candidates), `dedupe` (kept after id dedupe), `risk` (blocks with at least one finding), `isolate` (blocks surviving the policy), `sort` (ranked evidence), and `topk` (evidence after truncation).
+`diagnostics` reports `risk_finding_count` (all findings), `quarantined_count`, `conflict_count` (explicit pairs), `output_count`, and `unknown_rule_ids`. The stage counters are `ingest` (input candidates), `dedupe` (kept after id dedupe), `risk` (blocks with at least one finding), `isolate` (blocks surviving the policy), `conflict` (reported pairs), `sort` (ranked evidence), and `topk` (evidence after truncation).
 
 ### 误报与边界
 
@@ -93,6 +94,35 @@ The rule set is an inspectable heuristic, not a classifier. Known boundaries:
 - **Paraphrases and languages beyond Chinese/English are out of scope.** The scan matches fixed phrases and code units; it does not understand intent.
 - **Spans count UTF-16 code units.** They are suitable for slicing the original MoonBit `String`, and for astral characters each code point occupies two units. Spans are mapped back through normalization, so they always address the original text.
 
+## 冲突检测
+
+Conflict detection runs after isolation and before trust scoring. It extracts explicit `(subject, unit, value)` claims and reports every pair of different documents that assert different values for the same normalized subject and unit.
+
+**Subject resolution** (in order): the text key before a separator (`:`, `：`, `=`, ` is `, ` was `, ` are `, ` were `, ` will be `, `为`, `是`, `达到`, `约为`, `等于`), then the source title, then the normalized query. Subjects are lowercased (ASCII), whitespace-collapsed, stripped of a leading `the` / `a` / `an`, and capped at 80 UTF-16 units. A value with no resolvable subject is ignored.
+
+**Values**: numbers (sign, thousands separators, decimals), multipliers (`thousand` / `million` / `billion` / `trillion`, `千` / `万` / `亿`, `k`), percentages (`%`, `percent`, `百分比`), and dates (`YYYY-MM-DD`, `YYYY/MM/DD`, `YYYY.MM.DD`, `YYYY年M月D日`, `Month D, YYYY`, `D Month YYYY`). Units are canonicalized into a small vocabulary: currency (`cny`, `usd`, `eur`, `gbp`), distance (`mm`, `cm`, `m`, `km`, `mi`), mass (`g`, `kg`, `lb`), volume (`ml`, `l`), time (`ms`, `s`, `min`, `h`, `day`, `week`, `month`, `year`), data size (`kb`–`tb`), temperature (`c`, `f`), area (`km2`, `m2`, …), and the unitless count `""`.
+
+**Pairing**: claims are grouped by `(subject, unit)`. Two claims pair when they come from different evidence ids and their values differ. Equal values never conflict; different units are never compared (`10 km` and `10 miles` are two groups), and one document's internal contradiction never pairs with itself.
+
+Each `conflicts[]` entry names both sides (`evidence_id`, comparable `value`, original `value_text`, and the span that slices the source). Every evidence entry carries `conflict_ids` pointing back to the pairs it participates in, plus a `conflict_penalty`.
+
+- `trust.breakdown.consistency = 1 / (1 + conflict_count)` feeds the trust content blend.
+- `conflict_penalty = clamp01(conflict_weight × conflict_count)` is subtracted from the rerank score. The default weight is `0.5`, so one pair costs `0.5` rank and two or more pairs hit the `1.0` cap.
+- `top_k` truncates `evidence` only; `conflicts` and their back-references remain as audit data.
+
+### 冲突检测边界
+
+- **No Chinese numerals.** Only Arabic digits are parsed; `六十八` is not a number.
+- **No unit conversion.** `10 km` and `10 miles` are different units and are never compared; `1 m` and `100 cm` likewise.
+- **No ranges or approximations.** `10–20` is parsed as two values; `about 10` drops the approximation word.
+- **Subject phrasing must match after normalization.** "France population" and "population of France" are different keys; "The tax rate" and "tax rate" are the same after the article is stripped.
+- **Fallback subjects can over-group.** An unkeyed, qualified value falls back to the source title, then the query; two unrelated values in same-titled documents can therefore land in one group.
+- **Ambiguous units are skipped.** `in` (inch) is not recognized because it is usually a preposition; `M` is not a multiplier because it collides with meters. Spell out `million`.
+- **Numbers inside words are ignored** (`abc123`), and bare numbers without a key or unit are not claims.
+- **Malformed dates are skipped** when a four-digit year is followed by `-`, `/`, or `年`; `2024.13.40` is a known exception because `.` is also a sentence boundary.
+- **Chinese copulas are heuristic.** `为` and `是` inside compounds can produce a short or wrong key; prefer explicit colons in Chinese text.
+- **Chinese/English only.** Other date formats and languages are out of scope; spans count UTF-16 code units and map back through normalization.
+
 ## Library
 
 The scan core (`src/`) is a pure library usable from any MoonBit CLI or FFI target (native / wasm-gc / js) — only `cmd/main` touches the filesystem. Import as `ShunjunGu/moon-trust`.
@@ -109,7 +139,7 @@ let report = @src.scan(
 
 ```console
 $ moon test --target all
-Total tests: 66, passed: 66, failed: 0.
+Total tests: 85, passed: 85, failed: 0.
 ```
 
 ## License

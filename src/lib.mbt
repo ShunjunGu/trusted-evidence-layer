@@ -42,7 +42,8 @@ pub(all) struct CandidateFile {
 ///|
 /// Scan configuration. `top_k` optionally truncates the evidence list; the
 /// weights steer the trust blend; the risk knobs select the isolation policy,
-/// scale its penalty, gate the blocked flag, and restrict the rule set.
+/// scale its penalty, gate the blocked flag, and restrict the rule set; and
+/// `conflict_weight` scales the rerank penalty for conflicting evidence.
 /// Every field is optional: absent keys fall back to deterministic defaults,
 /// and every absent key is omitted from the echo so a default config still
 /// serializes as `{}`.
@@ -56,6 +57,7 @@ pub(all) struct ScanConfig {
   risk_weight : Double?
   block_on_high : Bool?
   enabled_rules : Array[String]?
+  conflict_weight : Double?
 }
 
 ///|
@@ -89,8 +91,8 @@ pub(all) struct TrustDetail {
 
 ///|
 /// One ordered 候选块 turned into evidence. Mirrors the input candidate and
-/// additionally reports the risk findings, the trust info, and the rerank
-/// score it was ordered by. Conflict references join here in a later ticket.
+/// additionally reports the risk findings, the conflict references and
+/// penalty, the trust info, and the rerank score it was ordered by.
 #derive(ToJson, Eq)
 pub(all) struct Evidence {
   id : String
@@ -99,6 +101,8 @@ pub(all) struct Evidence {
   retrieval_score : Double
   span : Span?
   risk_findings : Array[RiskFinding]
+  conflict_ids : Array[String]
+  conflict_penalty : Double
   rerank_score : Double
   trust : TrustDetail
 }
@@ -120,6 +124,7 @@ pub(all) struct Diagnostics {
   unknown_rule_ids : Array[String]
   risk_finding_count : Int32
   quarantined_count : Int32
+  conflict_count : Int32
   output_count : Int32
   stages : Array[StageRecord]
 }
@@ -136,6 +141,7 @@ pub(all) struct ScanReport {
   query : String
   config : ScanConfig
   evidence : Array[Evidence]
+  conflicts : Array[Conflict]
   quarantined : Array[QuarantinedBlock]
   blocked : Bool
   diagnostics : Diagnostics
@@ -154,6 +160,7 @@ pub impl Default for ScanConfig with fn default() {
     risk_weight: None,
     block_on_high: None,
     enabled_rules: None,
+    conflict_weight: None,
   }
 }
 
@@ -246,10 +253,11 @@ pub fn parse_candidates(text : String) -> CandidateFile raise {
 
 ///|
 /// Run the deterministic pipeline: dedupe (first occurrence in input order
-/// wins), scan risk rules, isolate per policy, score trust with the applied
-/// risk factor, stable selection sort by rerank score (retrieval score +
-/// trust) descending / id ascending / original input order, then optional
-/// `top_k` truncation.
+/// wins), scan risk rules, isolate per policy, detect cross-document
+/// conflicts, score trust with the applied risk factor and consistency
+/// signal, stable selection sort by rerank score (retrieval score + trust −
+/// conflict penalty) descending / id ascending / original input order, then
+/// optional `top_k` truncation.
 pub fn scan(
   query : String,
   config : ScanConfig,
@@ -326,6 +334,15 @@ pub fn scan(
       survivors.push(entry)
     }
   }
+  let conflict_weight = match config.conflict_weight {
+    Some(weight) => finite_or(weight, 0.5)
+    None => 0.5
+  }
+  let conflict_candidates : Array[Candidate] = []
+  for entry in survivors {
+    conflict_candidates.push(entry.candidate)
+  }
+  let conflicts = detect_conflicts(query, conflict_candidates)
   let scored : Array[Entry] = []
   for entry in survivors {
     let factor = if downrank_policy {
@@ -333,20 +350,29 @@ pub fn scan(
     } else {
       1.0
     }
+    let refs = conflict_refs(entry.candidate.id, conflicts)
+    let conflict_count = refs.1
     let trust = score_trust(
       entry.candidate,
       source_weight,
       content_weight,
       factor,
+      conflict_count,
+    )
+    let conflict_penalty = clamp_unit(
+      conflict_weight * conflict_count.to_double(),
     )
     let rerank = finite_or(entry.candidate.retrieval_score, 0.0) +
-      trust_weight * trust.score
+      trust_weight * trust.score -
+      conflict_penalty
     scored.push({
       candidate: entry.candidate,
       index: entry.index,
       trust,
       rerank,
       findings: entry.findings,
+      conflict_ids: refs.0,
+      conflict_penalty,
     })
   }
   let ordered = order_candidates(scored)
@@ -363,6 +389,7 @@ pub fn scan(
     query,
     config,
     evidence,
+    conflicts,
     quarantined,
     blocked,
     diagnostics: {
@@ -371,12 +398,14 @@ pub fn scan(
       unknown_rule_ids: unknown_rule_ids(config.enabled_rules),
       risk_finding_count,
       quarantined_count: quarantined.length(),
+      conflict_count: conflicts.length(),
       output_count: evidence.length(),
       stages: [
         { name: "ingest", count: candidate_count, },
         { name: "dedupe", count: kept.length(), },
         { name: "risk", count: risky_count, },
         { name: "isolate", count: survivors.length(), },
+        { name: "conflict", count: conflicts.length(), },
         { name: "sort", count: sorted_count, },
         { name: "topk", count: evidence.length(), },
       ],
@@ -417,6 +446,8 @@ priv struct Entry {
   rerank : Double
   index : Int32
   findings : Array[RiskFinding]
+  conflict_ids : Array[String]
+  conflict_penalty : Double
 }
 
 ///|
@@ -505,6 +536,7 @@ fn score_trust(
   source_weight : Double,
   content_weight : Double,
   risk : Double,
+  conflict_count : Int32,
 ) -> TrustDetail {
   let metadata = metadata_completeness(candidate.source)
   let scheme = source_type(candidate.source.uri)
@@ -512,7 +544,7 @@ fn score_trust(
   let length = length_score(candidate.text)
   let template_ratio = template_marker_ratio(candidate.text)
   let template = template_cleanliness(template_ratio)
-  let consistency = consistency_score(candidate.text)
+  let consistency = consistency_score(conflict_count)
   let content_score = (length + template + consistency) / 3.0
   let raw = source_weight * source_score + content_weight * content_score
   let score = clamp_unit(raw * risk)
@@ -622,11 +654,10 @@ fn template_cleanliness(ratio : Double) -> Double {
 }
 
 ///|
-/// 语言一致性 signal. Zero penalty in this ticket: the constant 1.0 keeps
-/// CJK/ASCII scripts neutral. 跨文档一致性 (ticket 04) replaces this
-/// placeholder without changing the breakdown shape.
-fn consistency_score(_text : String) -> Double {
-  1.0
+/// 跨文档一致性 signal: 1.0 with no conflicts, then 1 / (1 + conflicts) so
+/// one pair halves the signal and repeated conflicts decay smoothly.
+fn consistency_score(conflict_count : Int32) -> Double {
+  1.0 / (1.0 + conflict_count.to_double())
 }
 
 ///|
@@ -639,6 +670,8 @@ fn to_evidence(entry : Entry) -> Evidence {
     retrieval_score: finite_or(entry.candidate.retrieval_score, 0.0),
     span: entry.candidate.span,
     risk_findings: entry.findings,
+    conflict_ids: entry.conflict_ids,
+    conflict_penalty: entry.conflict_penalty,
     rerank_score: entry.rerank,
     trust: entry.trust,
   }

@@ -5,7 +5,7 @@
 ///|
 // The usage line, pinned here because tests assert the exact combined
 // output "moon-trust: <msg>\n<usage>" for every invalid outcome.
-const USE : String = "usage: moon-trust scan <query> <candidates.json> [--top-k N] [--policy drop|mark|downrank] [--block-on-high] [--risk-weight W]"
+const USE : String = "usage: moon-trust scan <query> <candidates.json> [--top-k N] [--policy drop|mark|downrank] [--block-on-high] [--risk-weight W] [--conflict-weight W]"
 
 ///|
 // Successful read: hands back the multi-candidate fixture regardless of path.
@@ -17,6 +17,12 @@ fn stub_ok(_ : String) -> Result[String, String] {
 // Successful read of the injected corpus.
 fn stub_injected(_ : String) -> Result[String, String] {
   Ok(INJECTED)
+}
+
+///|
+// Successful read of the conflict corpus.
+fn stub_conflicts(_ : String) -> Result[String, String] {
+  Ok(CONFLICTS)
 }
 
 ///|
@@ -164,6 +170,59 @@ test "identical invocations render byte-identical output" {
   let first = @cli.resolve(args, stub_ok)
   let second = @cli.resolve(args, stub_ok)
   assert_eq(first.output, second.output)
+}
+
+///|
+test "--conflict-weight flows into the report config" {
+  let args : Array[String] = [
+    "moon-trust", "scan", "france", "c.json", "--conflict-weight", "0.5",
+  ]
+  let outcome = @cli.resolve(args, stub_conflicts)
+  assert_eq(outcome.code.to_int(), 0)
+  assert_true(outcome.output.contains("\"conflict_weight\":0.5"))
+  assert_true(outcome.output.contains("\"conflicts\":[{"))
+}
+
+///|
+test "--conflict-weight accepts zero and rejects bad values" {
+  let zero : Array[String] = [
+    "moon-trust", "scan", "france", "c.json", "--conflict-weight", "0",
+  ]
+  let accepted = @cli.resolve(zero, stub_conflicts)
+  assert_eq(accepted.code.to_int(), 0)
+  assert_true(accepted.output.contains("\"conflict_weight\":0"))
+
+  let missing : Array[String] = [
+    "moon-trust", "scan", "hello", "c.json", "--conflict-weight",
+  ]
+  assert_eq(
+    @cli.resolve(missing, stub_ok).output,
+    "moon-trust: missing value for --conflict-weight\n" + USE,
+  )
+  let negative : Array[String] = [
+    "moon-trust", "scan", "hello", "c.json", "--conflict-weight", "-1",
+  ]
+  assert_eq(
+    @cli.resolve(negative, stub_ok).output,
+    "moon-trust: --conflict-weight expects a non-negative finite number, got: -1\n" +
+    USE,
+  )
+  let nan : Array[String] = [
+    "moon-trust", "scan", "hello", "c.json", "--conflict-weight", "NaN",
+  ]
+  assert_eq(
+    @cli.resolve(nan, stub_ok).output,
+    "moon-trust: --conflict-weight expects a non-negative finite number, got: NaN\n" +
+    USE,
+  )
+  let text : Array[String] = [
+    "moon-trust", "scan", "hello", "c.json", "--conflict-weight", "abc",
+  ]
+  assert_eq(
+    @cli.resolve(text, stub_ok).output,
+    "moon-trust: --conflict-weight expects a non-negative finite number, got: abc\n" +
+    USE,
+  )
 }
 
 ///|
