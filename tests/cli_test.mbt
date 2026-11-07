@@ -130,7 +130,11 @@ test "a valid run prints exactly the built report" {
   let args : Array[String] = ["moon-trust", "scan", "hello", "c.json"]
   let outcome = @cli.resolve(args, stub_ok)
   let expected = render(
-    @src.scan("hello", { top_k: None, }, decode(MULTI).candidates),
+    @src.scan(
+      "hello",
+      { ..@src.ScanConfig::default(), top_k: None, },
+      decode(MULTI).candidates,
+    ),
   )
   assert_eq(outcome.output, expected)
   assert_eq(outcome.code.to_int(), 0)

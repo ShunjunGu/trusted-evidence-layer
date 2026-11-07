@@ -1,4 +1,4 @@
-// Walking skeleton: candidate contract + deterministic scan.
+// 候选块契约 + 确定性扫描：信任评分与信任感知重排。
 
 ///|
 /// A retrievable text chunk with provenance. All fields are part of the
@@ -15,7 +15,7 @@ pub(all) struct Candidate {
 ///|
 /// Source provenance. `fetched_at` is input data only: it is echoed but
 /// never generated, so no wall-clock value ever enters the report. `hint`
-/// is an optional trust annotation, unused by the skeleton scan.
+/// is an optional trust annotation consumed by trust scoring.
 #derive(ToJson, FromJson, Eq)
 pub(all) struct SourceMeta {
   uri : String
@@ -40,10 +40,56 @@ pub(all) struct CandidateFile {
 }
 
 ///|
-/// Scan configuration: optional truncation to the first `top_k` results.
+/// Scan configuration. `top_k` optionally truncates the evidence list; the
+/// weights steer the trust blend. Weights are optional: absent keys fall
+/// back to deterministic defaults, and every absent key is omitted from the
+/// echo so a default config still serializes as `{}`.
 #derive(ToJson, Eq)
 pub(all) struct ScanConfig {
   top_k : Int32?
+  source_weight : Double?
+  content_weight : Double?
+  trust_weight : Double?
+}
+
+///|
+/// Trust breakdown: the two weighted components plus every sub-signal
+/// behind them. Components blend trust; sub-signals only explain it.
+/// `template_ratio` is the raw marker share (higher is worse); the other
+/// sub-signals are quality signals in [0, 1] (higher is better).
+#derive(ToJson, Eq)
+pub(all) struct TrustBreakdown {
+  source_score : Double
+  content_score : Double
+  metadata : Double
+  source_type : Double
+  length : Double
+  template_ratio : Double
+  language_consistency : Double
+}
+
+///|
+/// Per-证据 trust: the score in [0, 1] together with its breakdown. It is
+/// an explainable heuristic, never a probability of correctness.
+#derive(ToJson, Eq)
+pub(all) struct TrustDetail {
+  score : Double
+  breakdown : TrustBreakdown
+}
+
+///|
+/// One ordered 候选块 turned into evidence. Mirrors the input candidate and
+/// additionally reports the trust info and the rerank score it was ordered
+/// by. Risk findings and conflict references join here in later tickets.
+#derive(ToJson, Eq)
+pub(all) struct Evidence {
+  id : String
+  text : String
+  source : SourceMeta
+  retrieval_score : Double
+  span : Span?
+  rerank_score : Double
+  trust : TrustDetail
 }
 
 ///|
@@ -71,9 +117,24 @@ pub(all) struct Diagnostics {
 pub(all) struct ScanReport {
   query : String
   config : ScanConfig
-  evidence : Array[Candidate]
+  evidence : Array[Evidence]
   diagnostics : Diagnostics
 }
+
+///|
+/// Default config: every knob absent, so the deterministic built-in
+/// defaults apply and the echoed snapshot stays `{}`.
+pub impl Default for ScanConfig with fn default() {
+  {
+    top_k: None,
+    source_weight: None,
+    content_weight: None,
+    trust_weight: None,
+  }
+}
+
+///|
+pub extend ScanConfig with Default::{default}
 
 // Derived trait implementations are installed as regular methods through
 // explicit extends, as the compiler recommends (implicit method promotion
@@ -116,6 +177,24 @@ pub extend ScanConfig with @moonbitlang/core/json.ToJson::{to_json}
 pub extend ScanConfig with Eq::{not_equal, equal}
 
 ///|
+pub extend TrustBreakdown with @moonbitlang/core/json.ToJson::{to_json}
+
+///|
+pub extend TrustBreakdown with Eq::{not_equal, equal}
+
+///|
+pub extend TrustDetail with @moonbitlang/core/json.ToJson::{to_json}
+
+///|
+pub extend TrustDetail with Eq::{not_equal, equal}
+
+///|
+pub extend Evidence with @moonbitlang/core/json.ToJson::{to_json}
+
+///|
+pub extend Evidence with Eq::{not_equal, equal}
+
+///|
 pub extend StageRecord with @moonbitlang/core/json.ToJson::{to_json}
 
 ///|
@@ -143,8 +222,9 @@ pub fn parse_candidates(text : String) -> CandidateFile raise {
 
 ///|
 /// Run the deterministic scan: dedupe (first occurrence in input order
-/// wins), stable selection sort by retrieval score descending / id
-/// ascending / original input order, then optional `top_k` truncation.
+/// wins), score trust per kept candidate, stable selection sort by rerank
+/// score (retrieval score + trust) descending / id ascending / original
+/// input order, then optional `top_k` truncation.
 pub fn scan(
   query : String,
   config : ScanConfig,
@@ -165,10 +245,26 @@ pub fn scan(
     kept.push(candidate)
   }
   let duplicate_id_count = candidate_count - kept.length()
-  let ordered = order_candidates(kept)
+  let (source_weight, content_weight) = resolve_weights(config)
+  let trust_weight = match config.trust_weight {
+    Some(weight) => finite_or(weight, 1.0)
+    None => 1.0
+  }
+  let scored : Array[Entry] = []
+  for index, candidate in kept {
+    let trust = score_trust(candidate, source_weight, content_weight)
+    let rerank = candidate.retrieval_score + trust_weight * trust.score
+    scored.push({ candidate, index, trust, rerank, })
+  }
+  let ordered = order_candidates(scored)
+  let all_evidence : Array[Evidence] = []
+  for entry in ordered {
+    all_evidence.push(to_evidence(entry))
+  }
+  let sorted_count = all_evidence.length()
   let evidence = match config.top_k {
-    Some(top_k) => take_first(ordered, top_k)
-    None => ordered
+    Some(top_k) => take_first(all_evidence, top_k)
+    None => all_evidence
   }
   {
     query,
@@ -181,7 +277,7 @@ pub fn scan(
       stages: [
         { name: "ingest", count: candidate_count, },
         { name: "dedupe", count: kept.length(), },
-        { name: "sort", count: ordered.length(), },
+        { name: "sort", count: sorted_count, },
         { name: "topk", count: evidence.length(), },
       ],
     },
@@ -189,20 +285,21 @@ pub fn scan(
 }
 
 ///|
-/// An ordered candidate together with its original input position.
+/// An ordered candidate, its trust info, its rerank score, and its original
+/// input position.
 priv struct Entry {
   candidate : Candidate
+  trust : TrustDetail
+  rerank : Double
   index : Int32
 }
 
 ///|
-/// Deterministic ordering. A fixed-field selection sort; stable and free
-/// of any dependency on input length or environment.
-fn order_candidates(candidates : Array[Candidate]) -> Array[Candidate] {
-  let working : Array[Entry] = []
-  for index, candidate in candidates {
-    working.push({ candidate, index, })
-  }
+/// Deterministic ordering. A fixed-field selection sort over a shallow copy,
+/// so the caller's array keeps its input order; stable and free of any
+/// dependency on input length or environment.
+fn order_candidates(entries : Array[Entry]) -> Array[Entry] {
+  let working = entries.copy()
   for target in 0..<working.length() {
     let mut best = target
     for probe in (target + 1)..<working.length() {
@@ -214,19 +311,16 @@ fn order_candidates(candidates : Array[Candidate]) -> Array[Candidate] {
     working[best] = working[target]
     working[target] = winner
   }
-  let ordered : Array[Candidate] = []
-  for entry in working {
-    ordered.push(entry.candidate)
-  }
-  ordered
+  working
 }
 
 ///|
-/// Strict total order: score descending, then id ascending, then original
-/// input order. The index tie-break means the comparator never ties.
+/// Strict total order: rerank score descending, then id ascending, then
+/// original input order. The index tie-break means the comparator never
+/// ties for distinct kept candidates.
 fn entry_before(first : Entry, second : Entry) -> Bool {
-  let first_score = first.candidate.retrieval_score
-  let second_score = second.candidate.retrieval_score
+  let first_score = first.rerank
+  let second_score = second.rerank
   if first_score > second_score {
     return true
   }
@@ -242,6 +336,184 @@ fn entry_before(first : Entry, second : Entry) -> Bool {
     return false
   }
   first.index < second.index
+}
+
+///|
+/// A finite weight, or the deterministic fallback. Keeps NaN and infinity
+/// out of the score, the report, and the ordering.
+fn finite_or(value : Double, fallback : Double) -> Double {
+  if value.is_finite() {
+    value
+  } else {
+    fallback
+  }
+}
+
+///|
+/// Resolve the trust blend weights. Absent or non-finite keys default to
+/// 0.5/0.5; a non-positive weight sum also falls back to equal weights.
+/// Negative weights are allowed — the final clamp keeps the score in range.
+fn resolve_weights(config : ScanConfig) -> (Double, Double) {
+  let source = match config.source_weight {
+    Some(weight) => finite_or(weight, 0.5)
+    None => 0.5
+  }
+  let content = match config.content_weight {
+    Some(weight) => finite_or(weight, 0.5)
+    None => 0.5
+  }
+  let total = source + content
+  if total > 0.0 {
+    (source / total, content / total)
+  } else {
+    (0.5, 0.5)
+  }
+}
+
+///|
+/// Trust score for one 候选块: trust_score = 来源分项 + 内容分项 weighted
+/// blend, normalized to source/content weights summing to 1, clamped to
+/// [0, 1]. Every sub-signal is clamped independently, so the score stays
+/// in range for any input, including degenerate metadata.
+fn score_trust(
+  candidate : Candidate,
+  source_weight : Double,
+  content_weight : Double,
+) -> TrustDetail {
+  let metadata = metadata_completeness(candidate.source)
+  let scheme = source_type(candidate.source.uri)
+  let source_score = (metadata + scheme) / 2.0
+  let length = length_score(candidate.text)
+  let template_ratio = template_marker_ratio(candidate.text)
+  let template = template_cleanliness(template_ratio)
+  let language = language_score(candidate.text)
+  let content_score = (length + template + language) / 3.0
+  let raw = source_weight * source_score + content_weight * content_score
+  let score = if raw < 0.0 { 0.0 } else if raw > 1.0 { 1.0 } else { raw }
+  {
+    score,
+    breakdown: {
+      source_score,
+      content_score,
+      metadata,
+      source_type: scheme,
+      length,
+      template_ratio,
+      language_consistency: language,
+    },
+  }
+}
+
+///|
+/// 元数据完整度: fraction of { non-empty uri, non-empty title, non-empty
+/// fetched_at, hint present }, out of the four provenance fields.
+fn metadata_completeness(source : SourceMeta) -> Double {
+  let mut present = 0
+  if source.uri != "" {
+    present = present + 1
+  }
+  if source.title != "" {
+    present = present + 1
+  }
+  if source.fetched_at != "" {
+    present = present + 1
+  }
+  match source.hint {
+    Some(_) => present = present + 1
+    None => ()
+  }
+  present.to_double() / 4.0
+}
+
+///|
+/// 来源类型 from the uri scheme (deterministic bands): https 1.0, managed
+/// store (s3/gs) 0.8, http 0.6, local file 0.4, any other scheme 0.3, no
+/// scheme 0.2. Unknown host forms score low rather than high on purpose.
+fn source_type(uri : String) -> Double {
+  if uri.has_prefix("https://") {
+    1.0
+  } else if uri.has_prefix("s3://") || uri.has_prefix("gs://") {
+    0.8
+  } else if uri.has_prefix("http://") {
+    0.6
+  } else if uri.has_prefix("file://") {
+    0.4
+  } else if uri.contains("://") {
+    0.3
+  } else {
+    0.2
+  }
+}
+
+///|
+/// Length signal: text length normalized by 40 characters and clipped to
+/// [0, 1]. Deterministic per target: string length counts UTF-16 code
+/// units, matching the pure-ASCII / BMP-only inputs of 宽度 heuristics.
+fn length_score(text : String) -> Double {
+  let share = text.length().to_double() / 40.0
+  if share < 0.0 {
+    0.0
+  } else if share > 1.0 {
+    1.0
+  } else {
+    share
+  }
+}
+
+///|
+/// 模板化比例: the raw share of template-ish characters (`{`, `}`, `<`,
+/// `>`) in the text, in [0, 1]. Higher means more templated (worse).
+/// Empty text carries no content and is treated as fully template-like.
+fn template_marker_ratio(text : String) -> Double {
+  let characters = text.length()
+  if characters == 0 {
+    return 1.0
+  }
+  let mut markers = 0
+  for i in 0..<characters {
+    let unit = text.code_unit_at(i)
+    if unit == 123 || unit == 125 || unit == 60 || unit == 62 {
+      markers = markers + 1
+    }
+  }
+  markers.to_double() / characters.to_double()
+}
+
+///|
+/// Template cleanliness used by the content component: 1 minus eight times
+/// the marker ratio, clipped to [0, 1], so a marker share of 12.5% or more
+/// scores 0.
+fn template_cleanliness(ratio : Double) -> Double {
+  let score = 1.0 - ratio * 8.0
+  if score < 0.0 {
+    0.0
+  } else if score > 1.0 {
+    1.0
+  } else {
+    score
+  }
+}
+
+///|
+/// 语言一致性 signal. Zero penalty in this ticket: the constant 1.0 keeps
+/// CJK/ASCII scripts neutral. 跨文档一致性 (ticket 04) replaces this
+/// placeholder without changing the breakdown shape.
+fn language_score(_text : String) -> Double {
+  1.0
+}
+
+///|
+/// Project an ordered entry into the public evidence shape.
+fn to_evidence(entry : Entry) -> Evidence {
+  {
+    id: entry.candidate.id,
+    text: entry.candidate.text,
+    source: entry.candidate.source,
+    retrieval_score: entry.candidate.retrieval_score,
+    span: entry.candidate.span,
+    rerank_score: entry.rerank,
+    trust: entry.trust,
+  }
 }
 
 ///|

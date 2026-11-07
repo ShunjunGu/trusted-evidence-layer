@@ -25,3 +25,12 @@ const EMPTY : String = "{\"candidates\": []}"
 ///|
 // Decode failure: a candidate missing its required `source` metadata.
 const MALFORMED : String = "{\"candidates\":[{\"id\":\"c1\",\"text\":\"x\",\"retrieval_score\":0.8}]}"
+
+///|
+// The quality gap: lowq rides a higher retrieval score (0.9) on junk
+// metadata (empty uri/title/fetched_at) and an 11-character template-
+// saturated text, while highq rides a lower retrieval score (0.4) on full
+// provenance (hint included) and a clean 40+ character paragraph. Under
+// the default weights highq must land first: trust=1.0 lifts it to
+// rerank 1.4, above lowq's ≈1.1625.
+const QUALITY_GAP : String = "{\"candidates\":[{\"id\":\"lowq\",\"text\":\"<{a}{b}{c}>\",\"source\":{\"uri\":\"\",\"title\":\"\",\"fetched_at\":\"\"},\"retrieval_score\":0.9},{\"id\":\"highq\",\"text\":\"A curated paragraph with plenty of plain body text verified by the editors.\",\"source\":{\"uri\":\"https://example.com/verified\",\"title\":\"Checked\",\"fetched_at\":\"2026-11-04T00:00:00Z\",\"hint\":\"curated\"},\"retrieval_score\":0.4}]}"

@@ -111,7 +111,11 @@ pub fn resolve(
   let file = @src.parse_candidates(content) catch {
     _ => return invalid("malformed candidates file")
   }
-  let report = @src.scan(query, { top_k, }, file.candidates)
+  let report = @src.scan(
+    query,
+    { ..@src.ScanConfig::default(), top_k, },
+    file.candidates,
+  )
   { output: report.to_json().stringify(), code: Success, }
 }
 

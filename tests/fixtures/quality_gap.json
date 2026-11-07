@@ -1,0 +1,25 @@
+{
+  "candidates": [
+    {
+      "id": "lowq",
+      "text": "<{a}{b}{c}>",
+      "source": {
+        "uri": "",
+        "title": "",
+        "fetched_at": ""
+      },
+      "retrieval_score": 0.9
+    },
+    {
+      "id": "highq",
+      "text": "A curated paragraph with plenty of plain body text verified by the editors.",
+      "source": {
+        "uri": "https://example.com/verified",
+        "title": "Checked",
+        "fetched_at": "2026-11-04T00:00:00Z",
+        "hint": "curated"
+      },
+      "retrieval_score": 0.4
+    }
+  ]
+}
