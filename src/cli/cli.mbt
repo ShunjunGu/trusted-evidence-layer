@@ -135,7 +135,7 @@ pub fn resolve(
           Some(value) => risk_weight = Some(value)
           None =>
             return invalid(
-              "--risk-weight expects a non-negative finite number, got: " +
+              "--risk-weight expects a positive finite number, got: " +
               args[i + 1],
             )
         }
@@ -199,7 +199,7 @@ fn parse_risk_weight(text : String) -> Double? {
   }
   match parsed {
     Some(value) =>
-      if value.is_finite() && value >= 0.0 {
+      if value.is_finite() && value > 0.0 {
         Some(value)
       } else {
         None

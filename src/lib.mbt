@@ -117,6 +117,7 @@ pub(all) struct StageRecord {
 pub(all) struct Diagnostics {
   candidate_count : Int32
   duplicate_id_count : Int32
+  unknown_rule_ids : Array[String]
   risk_finding_count : Int32
   quarantined_count : Int32
   output_count : Int32
@@ -338,7 +339,8 @@ pub fn scan(
       content_weight,
       factor,
     )
-    let rerank = entry.candidate.retrieval_score + trust_weight * trust.score
+    let rerank = finite_or(entry.candidate.retrieval_score, 0.0) +
+      trust_weight * trust.score
     scored.push({
       candidate: entry.candidate,
       index: entry.index,
@@ -366,6 +368,7 @@ pub fn scan(
     diagnostics: {
       candidate_count,
       duplicate_id_count,
+      unknown_rule_ids: unknown_rule_ids(config.enabled_rules),
       risk_finding_count,
       quarantined_count: quarantined.length(),
       output_count: evidence.length(),
@@ -398,9 +401,9 @@ fn to_quarantined(entry : Scanned) -> QuarantinedBlock {
     id: entry.candidate.id,
     text: entry.candidate.text,
     source: entry.candidate.source,
-    retrieval_score: entry.candidate.retrieval_score,
+    retrieval_score: finite_or(entry.candidate.retrieval_score, 0.0),
     span: entry.candidate.span,
-    findings: entry.findings,
+    risk_findings: entry.findings,
     reason: "dropped by policy: high-severity risk",
   }
 }
@@ -633,7 +636,7 @@ fn to_evidence(entry : Entry) -> Evidence {
     id: entry.candidate.id,
     text: entry.candidate.text,
     source: entry.candidate.source,
-    retrieval_score: entry.candidate.retrieval_score,
+    retrieval_score: finite_or(entry.candidate.retrieval_score, 0.0),
     span: entry.candidate.span,
     risk_findings: entry.findings,
     rerank_score: entry.rerank,

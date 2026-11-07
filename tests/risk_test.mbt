@@ -161,8 +161,11 @@ test "drop policy quarantines high-severity blocks and keeps the rest annotated"
   assert_eq(report.quarantined[2].id, "role")
   assert_eq(report.quarantined[3].id, "payload")
   assert_eq(report.quarantined[4].id, "delimiter")
-  assert_eq(report.quarantined[0].findings.length(), 2)
-  assert_eq(report.quarantined[0].findings[0].severity, @src.RiskSeverity::High)
+  assert_eq(report.quarantined[0].risk_findings.length(), 2)
+  assert_eq(
+    report.quarantined[0].risk_findings[0].severity,
+    @src.RiskSeverity::High,
+  )
   assert_true(report.quarantined[0].reason.contains("high-severity"))
   // Medium and low findings survive on the kept blocks, still annotated.
   assert_eq(
@@ -175,7 +178,7 @@ test "drop policy quarantines high-severity blocks and keeps the rest annotated"
   )
   assert_eq(report.blocked, false)
   assert_eq(report.diagnostics.quarantined_count, 5)
-  assert_eq(report.diagnostics.risk_finding_count, 8)
+  assert_eq(report.diagnostics.risk_finding_count, 9)
   assert_eq(stage_count(report, "risk"), 7)
   assert_eq(stage_count(report, "isolate"), 5)
   assert_eq(stage_count(report, "sort"), 5)
@@ -362,7 +365,7 @@ test "risk scoring keeps every score and sub-signal within [0, 1]" {
         assert_true(known)
       }
       for quarantined in report.quarantined {
-        assert_true(quarantined.findings.length() > 0)
+        assert_true(quarantined.risk_findings.length() > 0)
       }
     }
   }

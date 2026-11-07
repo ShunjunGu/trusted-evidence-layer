@@ -272,7 +272,7 @@ test "--risk-weight rejects missing, non-numeric, negative, and non-finite value
   ]
   assert_eq(
     @cli.resolve(nan, stub_ok).output,
-    "moon-trust: --risk-weight expects a non-negative finite number, got: NaN\n" +
+    "moon-trust: --risk-weight expects a positive finite number, got: NaN\n" +
     USE,
   )
   let negative : Array[String] = [
@@ -280,7 +280,7 @@ test "--risk-weight rejects missing, non-numeric, negative, and non-finite value
   ]
   assert_eq(
     @cli.resolve(negative, stub_ok).output,
-    "moon-trust: --risk-weight expects a non-negative finite number, got: -1\n" +
+    "moon-trust: --risk-weight expects a positive finite number, got: -1\n" +
     USE,
   )
   let text : Array[String] = [
@@ -288,7 +288,14 @@ test "--risk-weight rejects missing, non-numeric, negative, and non-finite value
   ]
   assert_eq(
     @cli.resolve(text, stub_ok).output,
-    "moon-trust: --risk-weight expects a non-negative finite number, got: abc\n" +
+    "moon-trust: --risk-weight expects a positive finite number, got: abc\n" +
     USE,
+  )
+  let zero : Array[String] = [
+    "moon-trust", "scan", "hello", "c.json", "--risk-weight", "0",
+  ]
+  assert_eq(
+    @cli.resolve(zero, stub_ok).output,
+    "moon-trust: --risk-weight expects a positive finite number, got: 0\n" + USE,
   )
 }
