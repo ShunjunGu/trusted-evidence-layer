@@ -79,7 +79,7 @@ test "conflicting numeric assertions produce explicit cross-document pairs with 
   }
 
   // Population: a=68m, b=67m, c=68m -> a-b and b-c, never a-c.
-  let population = conflicts_for(report, "france population", "")
+  let population = conflicts_for(report, "france population", "million")
   assert_eq(population.length(), 2)
   assert_true(
     (
@@ -96,7 +96,7 @@ test "conflicting numeric assertions produce explicit cross-document pairs with 
   assert_eq(tax.length(), 2)
   assert_true(near(tax[0].left.value, 20.0) || near(tax[0].right.value, 21.0))
   // Chinese colon + 万 multiplier + percent.
-  assert_eq(conflicts_for(report, "法国人口", "").length(), 1)
+  assert_eq(conflicts_for(report, "法国人口", "万").length(), 1)
   assert_eq(conflicts_for(report, "税率", "%").length(), 1)
   // Dates are a distinct unit and conflict only on different days.
   let dates = conflicts_for(report, "effective date", "date")
@@ -195,7 +195,7 @@ test "a trailing noun does not change a qualified value" {
     conflict_candidate("people-b", "Population is 67 million people.", ""),
   ]
   let report = @src.scan("q", @src.ScanConfig::default(), candidates)
-  assert_eq(conflicts_for(report, "population", "").length(), 1)
+  assert_eq(conflicts_for(report, "population", "million").length(), 1)
 }
 
 ///|
@@ -209,8 +209,8 @@ test "Chinese and mixed-language subjects and units are compared" {
     conflict_candidate("unit-en", "Distance is 12 km", ""),
   ]
   let report = @src.scan("q", @src.ScanConfig::default(), candidates)
-  assert_eq(conflicts_for(report, "法国人口", "").length(), 1)
-  assert_eq(conflicts_for(report, "france population", "").length(), 1)
+  assert_eq(conflicts_for(report, "法国人口", "万").length(), 1)
+  assert_eq(conflicts_for(report, "france population", "million").length(), 1)
   assert_eq(conflicts_for(report, "distance", "km").length(), 1)
 }
 
@@ -419,4 +419,20 @@ test "top_k truncates evidence but keeps the conflict audit trail" {
   assert_eq(report.conflicts.length(), 7)
   assert_eq(report.diagnostics.conflict_count, 7)
   assert_eq(stage_count(report, "conflict"), 7)
+}
+
+///|
+test "different magnitudes never pair under one subject" {
+  let candidates : Array[@src.Candidate] = [
+    conflict_candidate(
+      "mix-a", "France: population 68 million, GDP 3 trillion.", "",
+    ),
+    conflict_candidate("mix-b", "France: population 67 million.", ""),
+  ]
+  let report = @src.scan("q", @src.ScanConfig::default(), candidates)
+  // Only the two population claims conflict; the GDP claim has a different
+  // scale (trillion) and therefore a different unit.
+  assert_eq(report.conflicts.length(), 1)
+  assert_eq(conflicts_for(report, "france", "million").length(), 1)
+  assert_eq(conflicts_for(report, "france", "trillion").length(), 0)
 }

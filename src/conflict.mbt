@@ -605,7 +605,7 @@ fn parse_numeric_value(units : Array[Int32], index : Int32) -> ParsedValue? {
       let multiplier_at = skip_spaces(units, number.end)
       let multiplier = parse_multiplier(units, multiplier_at)
       let mut value_end = if multiplier.0 != 1.0 {
-        multiplier.1
+        multiplier.2
       } else {
         number.end
       }
@@ -614,58 +614,74 @@ fn parse_numeric_value(units : Array[Int32], index : Int32) -> ParsedValue? {
       if unit.0 != "" {
         value_end = unit.1
       }
+      // The multiplier stays part of the unit, so claims of different
+      // magnitudes never pair: "68 million" and "3 trillion" are different
+      // units, while "68 million" and "67 million" share one.
+      let scale = multiplier.1
+      let combined_unit = if scale == "" {
+        unit.0
+      } else if unit.0 == "" {
+        scale
+      } else {
+        scale + " " + unit.0
+      }
       Some({
         value: number.value * multiplier.0,
         end: value_end,
-        unit: unit.0,
-        qualified: unit.0 != "" || multiplier.0 != 1.0,
+        unit: combined_unit,
+        qualified: combined_unit != "",
       })
     }
   }
 }
 
 ///|
-/// Multiplier word at `index`, as (factor, end); 1.0 when absent.
-fn parse_multiplier(units : Array[Int32], index : Int32) -> (Double, Int32) {
+/// Multiplier word at `index`, as (factor, canonical scale, end); the scale
+/// is empty and the factor 1.0 when absent. The scale becomes part of the
+/// unit, so different magnitudes never pair.
+fn parse_multiplier(
+  units : Array[Int32],
+  index : Int32,
+) -> (Double, String, Int32) {
   match match_word(units, index, "thousand") {
-    Some(end) => return (1000.0, end)
+    Some(end) => return (1000.0, "thousand", end)
     None => ()
   }
   match match_word(units, index, "million") {
-    Some(end) => return (1000000.0, end)
+    Some(end) => return (1000000.0, "million", end)
     None => ()
   }
   match match_word(units, index, "billion") {
-    Some(end) => return (1000000000.0, end)
+    Some(end) => return (1000000000.0, "billion", end)
     None => ()
   }
   match match_word(units, index, "trillion") {
-    Some(end) => return (1000000000000.0, end)
+    Some(end) => return (1000000000000.0, "trillion", end)
     None => ()
   }
   if index < units.length() {
     let unit = units[index]
     if unit == 0x5343 {
       // 千
-      return (1000.0, index + 1)
+      return (1000.0, "thousand", index + 1)
     }
     if unit == 0x4E07 {
       // 万
-      return (10000.0, index + 1)
+      return (10000.0, "万", index + 1)
     }
     if unit == 0x4EBF {
       // 亿
-      return (100000000.0, index + 1)
+      return (100000000.0, "亿", index + 1)
     }
     if unit == 107 {
       // k, only when not glued to another letter
       let end = index + 1
       if end >= units.length() || !is_letter_unit(units[end]) {
-        return (1000.0, end)
+        return (1000.0, "thousand", end)
       }
     }
   }
-  (1.0, index)
+  (1.0, "", index)
 }
 
 ///|
