@@ -44,7 +44,8 @@ pub extend CliOutcome with @moonbitlang/core/debug.Debug::{to_repr}
 
 ///|
 fn usage() -> String {
-  "usage: moon-trust scan <query> <candidates.json> [--top-k N] [--policy drop|mark|downrank] [--block-on-high] [--risk-weight W] [--conflict-weight W] [--context-budget N]"
+  "usage: moon-trust scan <query> <candidates.json> [--top-k N] [--policy drop|mark|downrank] [--block-on-high] [--risk-weight W] [--conflict-weight W] [--context-budget N]\n" +
+  "       moon-trust demo <candidates.json> [--json-out PATH]"
 }
 
 ///|

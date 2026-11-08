@@ -81,15 +81,20 @@ pub extend RiskPolicy with @moonbitlang/core/debug.Debug::{to_repr}
 pub extend RiskPolicy with Eq::{not_equal, equal}
 
 ///|
+/// Lowercase policy label, shared by JSON serialization and human renderers
+/// so the vocabulary cannot drift between them.
+pub fn policy_label(policy : RiskPolicy) -> String {
+  match policy {
+    Drop => "drop"
+    Mark => "mark"
+    Downrank => "downrank"
+  }
+}
+
+///|
 /// Lowercase policy name in JSON.
 pub impl @json.ToJson for RiskPolicy with fn to_json(self : RiskPolicy) -> @json.Json {
-  @json.Json::string(
-    match self {
-      Drop => "drop"
-      Mark => "mark"
-      Downrank => "downrank"
-    },
-  )
+  @json.Json::string(policy_label(self))
 }
 
 ///|

@@ -5,7 +5,8 @@
 ///|
 // The usage line, pinned here because tests assert the exact combined
 // output "moon-trust: <msg>\n<usage>" for every invalid outcome.
-const USE : String = "usage: moon-trust scan <query> <candidates.json> [--top-k N] [--policy drop|mark|downrank] [--block-on-high] [--risk-weight W] [--conflict-weight W] [--context-budget N]"
+const USE : String = "usage: moon-trust scan <query> <candidates.json> [--top-k N] [--policy drop|mark|downrank] [--block-on-high] [--risk-weight W] [--conflict-weight W] [--context-budget N]\n" +
+  "       moon-trust demo <candidates.json> [--json-out PATH]"
 
 ///|
 // Successful read: hands back the multi-candidate fixture regardless of path.

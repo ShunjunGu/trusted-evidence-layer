@@ -51,6 +51,17 @@ jobs:
       - name: Test (all targets)
         run: moon test --target all
 
+      # The acceptance demo must be reproducible offline: same corpus, same
+      # summary, same JSON bytes. Runs on every matrix OS.
+      - name: Demo comparison is reproducible
+        shell: bash
+        run: |
+          moon build --target native
+          moon run cmd/main --target native -- demo tests/fixtures/demo.json --json-out "$RUNNER_TEMP/demo-a.json" > "$RUNNER_TEMP/demo-a.txt"
+          moon run cmd/main --target native -- demo tests/fixtures/demo.json --json-out "$RUNNER_TEMP/demo-b.json" > "$RUNNER_TEMP/demo-b.txt"
+          diff -u "$RUNNER_TEMP/demo-a.txt" "$RUNNER_TEMP/demo-b.txt"
+          diff -u "$RUNNER_TEMP/demo-a.json" "$RUNNER_TEMP/demo-b.json"
+
   fmt:
     name: fmt
     runs-on: ubuntu-latest

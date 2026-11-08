@@ -1,6 +1,6 @@
 # moon-trust
 
-A **deterministic trusted-evidence layer** between retrievers and generators: every scan turns an untrusted retrieval feed into a single-line, JSON-serializable report — snapshot of the query and config, risk findings per block, explicit cross-document conflicts, quarantine audit trail, evidence re-ranked by retrieval score plus an explainable trust score minus conflict penalties, a budgeted generator-ready context with citations, and diagnostics — and two runs on identical inputs produce **byte-identical** output.
+A **deterministic trusted-evidence layer** between retrievers and generators: every scan turns an untrusted retrieval feed into a single-line, JSON-serializable report — snapshot of the query and config, risk findings per block, explicit cross-document conflicts, quarantine audit trail, evidence re-ranked by retrieval score plus an explainable trust score minus conflict penalties, a budgeted generator-ready context with citations, and diagnostics — and two runs on identical inputs produce **byte-identical** output. A one-command [acceptance demo](#验收演示有无信任层对比) runs the same fixed corpus with and without the layer and reports exactly what changed.
 
 ## Install
 
@@ -43,6 +43,86 @@ $ echo $?
 ```
 
 Exit codes: `0` success, `1` usage error or malformed candidates file, `2` candidates file cannot be read, `3` blocked scan (report still printed on stdout). Errors and the usage line are printed on stdout; stderr is always empty. The candidates file is JSON encoding of a list of evidence entries (`{id, text, source:{uri, title?, fetched_at, hint?}, retrieval_score, span?}`); each run is filesystem-free — determinism comes from the inputs, never from wall-clock time or randomness.
+
+The full usage line is:
+
+```text
+usage: moon-trust scan <query> <candidates.json> [--top-k N] [--policy drop|mark|downrank] [--block-on-high] [--risk-weight W] [--conflict-weight W] [--context-budget N]
+       moon-trust demo <candidates.json> [--json-out PATH]
+```
+
+## 验收演示：有/无信任层对比
+
+`demo` measures one fixed corpus twice — as the raw retrieval feed (no trust layer) and through the full pipeline — and reports the difference in one command. It needs no network, no keys, and no external service; the same corpus always produces the same summary and the same JSON bytes. This is the demo path for the application walkthrough.
+
+```console
+$ moon run cmd/main --target native -- demo tests/fixtures/demo.json --json-out _build/demo.json
+moon-trust demo: with vs without the trust layer
+query: demo
+corpus: 11 candidates; policy: drop
+
+metric                      without trust     with trust
+unsafe blocks exposed       5                 0
+conflict pairs found        0                 2
+injections intercepted      0                 5
+
+ranking changes (retrieval order -> rerank order):
+  benign-imperative   9 ->  1  (+8)
+  high-trust         10 ->  2  (+8)
+  benign-doc         11 ->  3  (+8)
+  low-trust           6 ->  4  (+2)
+  fact-a              7 ->  5  (+2)
+  fact-b              8 ->  6  (+2)
+(6 of 6 surviving blocks changed rank)
+
+quarantined (5): inj-override, inj-role, inj-hidden, inj-delimiter, inj-payload
+trusted run: 6 evidence, blocked=true
+context: 6 blocks, 162 tokens / budget 512, truncated=false
+```
+
+**Side definitions.** *Without the trust layer* is the raw retrieval feed: every candidate in retrieval-score order (ties by id, then input order), nothing removed and nothing detected. *With the trust layer* is a normal `scan` with `--policy drop --block-on-high` and default weights, so conflict detection, trust rerank, and context assembly all apply. The baseline's safety numbers are a counterfactual disclosure measured with the same scanner — not a second pipeline.
+
+**Metrics.**
+
+| metric | without | with | meaning |
+| --- | --- | --- | --- |
+| `unsafe_blocks_exposed` | 5 | 0 | blocks with at least one high-severity finding that would reach the generator |
+| `conflict_pairs` | 0 | 2 | explicit cross-document `(subject, unit, value)` disagreements |
+| `injections_intercepted` | 0 | 5 | high-severity blocks removed by the drop policy (the quarantine list) |
+| `ranking_changes` | — | 6 | surviving blocks whose 1-based rank differs from retrieval order; `delta = before − after`, positive means moved up |
+
+Dropped blocks appear in `quarantined_ids`, not in `ranking_changes`: the raw feed's rank has no counterpart for a block the trusted run removed.
+
+**Machine-readable artifact.** `--json-out PATH` writes the comparison while the human summary still goes to stdout. The JSON is one line with the same numbers plus both full orders:
+
+```json
+{
+  "query": "demo",
+  "corpus_size": 11,
+  "policy": "drop",
+  "baseline": {"order": ["inj-override", "..."], "unsafe_blocks": 5, "high_severity_findings": 6, "risk_findings": 9},
+  "trusted": {"order": ["benign-imperative", "..."], "unsafe_blocks": 0, "high_severity_findings": 0, "risk_findings": 1, "conflicts": 2, "quarantined_count": 5, "quarantined_ids": ["inj-override", "..."], "blocked": true, "context": {"budget": 512, "included_count": 6, "estimated_tokens": 162, "truncated": false}},
+  "comparison": {
+    "unsafe_blocks_exposed": {"before": 5, "after": 0, "delta": -5},
+    "conflict_pairs": {"before": 0, "after": 2, "delta": 2},
+    "injections_intercepted": {"before": 0, "after": 5, "delta": 5},
+    "ranking_changes": [{"id": "benign-imperative", "before_rank": 9, "after_rank": 1, "delta": 8}, "..."]
+  }
+}
+```
+
+**Reproducibility.** Run the same command twice and compare both streams; they are byte-identical:
+
+```console
+$ moon build --target native
+$ moon run cmd/main --target native -- demo tests/fixtures/demo.json --json-out _build/a.json > _build/a.txt
+$ moon run cmd/main --target native -- demo tests/fixtures/demo.json --json-out _build/b.json > _build/b.txt
+$ diff _build/a.txt _build/b.txt && diff _build/a.json _build/b.json
+```
+
+CI runs this check on the native target (`.github/workflows/ci.yml`). The corpus is `tests/fixtures/demo.json`; no network, credentials, clock, or randomness participate.
+
+A successful comparison always exits `0`, even when `blocked` is `true`; use `scan --block-on-high` when the exit status itself must gate downstream work. Input errors follow the scan contract: `1` usage error or malformed candidates file, `2` unreadable candidates file or unwritable JSON path.
 
 ## 风险扫描与隔离
 
@@ -182,10 +262,10 @@ let context = report.context
 
 ```console
 $ moon test --target all
-Total tests: 108, passed: 108, failed: 0. [wasm]
-Total tests: 108, passed: 108, failed: 0. [wasm-gc]
-Total tests: 108, passed: 108, failed: 0. [js]
-Total tests: 108, passed: 108, failed: 0. [native]
+Total tests: 125, passed: 125, failed: 0. [wasm]
+Total tests: 125, passed: 125, failed: 0. [wasm-gc]
+Total tests: 125, passed: 125, failed: 0. [js]
+Total tests: 125, passed: 125, failed: 0. [native]
 ```
 
 ## License

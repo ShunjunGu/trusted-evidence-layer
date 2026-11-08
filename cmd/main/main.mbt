@@ -38,8 +38,41 @@ fn read_candidates_file(path : String) -> Result[String, String] {
 }
 
 ///|
+// The write seam for the demo's --json-out artifact. The path's parent
+// directory must already exist; any failure is an operational error (exit 2).
+fn write_artifact(path : String, content : String) -> Result[Unit, String] {
+  try @fs.write_string_to_file(path, content, encoding="utf8") |> Ok catch {
+    _ => Err("cannot write '\{path}'")
+  }
+}
+
+///|
+// The two side effects a cmd/main may own: read the input, print the outcome,
+// optionally write the demo JSON artifact, and set the process exit status.
 fn main {
-  let outcome = @cli.resolve(@env.args(), read_candidates_file)
-  println(outcome.output)
-  exit_with(outcome.code.to_int())
+  let args = @env.args()
+  if args.length() >= 2 && args[1] == "demo" {
+    let outcome = @cli.resolve_demo(args, read_candidates_file)
+    match outcome.json_path {
+      Some(path) =>
+        match outcome.json_text {
+          Some(text) =>
+            match write_artifact(path, text) {
+              Ok(_) => ()
+              Err(msg) => {
+                println("moon-trust: " + msg)
+                exit_with(2)
+              }
+            }
+          None => ()
+        }
+      None => ()
+    }
+    println(outcome.output)
+    exit_with(outcome.code.to_int())
+  } else {
+    let outcome = @cli.resolve(args, read_candidates_file)
+    println(outcome.output)
+    exit_with(outcome.code.to_int())
+  }
 }
