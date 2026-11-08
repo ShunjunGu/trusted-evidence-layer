@@ -161,10 +161,29 @@ fn render_block(index : Int32, evidence : Evidence) -> String {
   let title = if evidence.source.title == "" {
     "(untitled)"
   } else {
-    evidence.source.title
+    escape_untrusted(evidence.source.title)
   }
-  "[\{index}] \{evidence.text}\n" +
-  "source: \{title} | \{evidence.source.uri} | \{evidence.source.fetched_at}"
+  "[\{index}] \{quote_untrusted(evidence.text)}\n" +
+  "source: \{title} | \{escape_untrusted(evidence.source.uri)} | \{escape_untrusted(evidence.source.fetched_at)}"
+}
+
+///|
+/// Neutralize citation, source-line, and separator lookalikes in untrusted
+/// text: brackets and pipes fold to their full-width forms, so only the
+/// renderer can emit an ASCII `[n]` marker or a ` | ` separator. The raw
+/// text remains available in `evidence[]`.
+fn escape_untrusted(text : String) -> String {
+  text
+  .replace_all(old="[", new="［")
+  .replace_all(old="]", new="］")
+  .replace_all(old="|", new="｜")
+}
+
+///|
+/// Quote every line of untrusted text with `| `, so a forged `source:` line
+/// cannot be confused with the renderer's own source line.
+fn quote_untrusted(text : String) -> String {
+  "| " + escape_untrusted(text).replace_all(old="\n", new="\n| ")
 }
 
 ///|
@@ -210,12 +229,15 @@ fn format_conflict_line(
   right_index : Int32,
 ) -> String {
   let group = if conflict.unit == "" {
-    conflict.subject
+    escape_untrusted(conflict.subject)
   } else {
-    conflict.subject + " (" + conflict.unit + ")"
+    escape_untrusted(conflict.subject) +
+    " (" +
+    escape_untrusted(conflict.unit) +
+    ")"
   }
   "- [\{left_index}] vs [\{right_index}] \{group}: " +
-  "\{conflict.left.value_text} vs \{conflict.right.value_text}"
+  "\{escape_untrusted(conflict.left.value_text)} vs \{escape_untrusted(conflict.right.value_text)}"
 }
 
 ///|

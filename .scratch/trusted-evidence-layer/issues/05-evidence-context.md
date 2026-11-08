@@ -25,7 +25,7 @@
 
 - 顺序：按重排后的 evidence 顺序贪心；当前块成本 + 当前附录成本仍不超预算时纳入，否则整块跳过并继续尝试后续更小块。块永不截断。
 - 令牌估算：ASCII `[A-Za-z0-9_]` 连续串按 1 词；每个非 ASCII 码点（含 CJK 字符与标点）按 1 token；ASCII 空白与标点不计。`estimated_tokens` 由最终文本重新估算，恒 ≤ `budget`。
-- 渲染：`[n] <text>` 换行 `source: <title 或 (untitled)> | <uri> | <fetched_at>`，块间空行。
+- 渲染：`[n] | <未信任文本>`，每行加 `| ` 引用前缀；`[`、`]`、`|` 在不可信文本与元数据中转为全角，只有渲染器能产出 ASCII `[n]` 与 ` | `；`source:` 行由渲染器生成。块间空行。
 
 ### 引用与附录
 
@@ -38,7 +38,7 @@
 - 新增 `tests/context_test.mbt`（15 个用例）：空候选、单候选、重复来源、空标题、中英混排；tight budget 确定性；greedy 跳过超大高排名块；budget 0；单块超预算整块丢弃；风险附录位置与逐条 marker；风险/冲突附录顺序；冲突附录行与双向引用；单端未包含的冲突不进入附录；ASCII 词/CJK 字增量各精确为 10；多预算性质（预算不破、引用可解析、计数守恒）。
 - CLI 新增 `--context-budget N`，覆盖 0、缺失值、负数、非整数。
 - 冻结空报告快照更新（新增 `context` 与 `context` stage）。
-- `moon check --deny-warn --target all` 通过；`moon test --target all` 108/108 × wasm / wasm-gc / js / native 通过。
+- `moon check --deny-warn --target all` 通过；`moon test --target all` 109/109 × wasm / wasm-gc / js / native 通过。
 - README 新增「证据上下文组装」「上下文边界」；`CONTEXT.md` 新增「引用」术语。
 
 ### 审核修正
@@ -46,3 +46,4 @@
 - **F1（已修）**：`Citation` 原先把 `SourceMeta` 的四个字段平铺复制（Data Clumps，字段演进会漂移）；改为嵌入 `source: SourceMeta`。
 - **F2（已修）**：严重度→字符串映射在 JSON 序列化与附录各一份（Repeated Switches）；提取 `risk.mbt` 包内 `severity_label` 单一实现。
 - **F3（已修）**：冲突行渲染原先用 `unwrap_or(0)` 兜底，理论上可写出无法解析的 `[0]`；改为 `trial_conflict_line -> String?`，不满足双端包含时返回 `None`，未解析 marker 不可达。
+- **F4（已修，安全问题）**：上下文原先原样拼入不可信文本，chunk 内的 `[99]` 或伪造的 `source:` 行可冒充引用/来源。现改为逐行 `| ` 引用前缀，并把不可信文本与元数据中的 `[`、`]`、`|` 折叠为全角 `［］｜`；只有渲染器能产出 ASCII `[n]` 与 ` | `。新增注入回归测试，断言 `[99]` 被转义、伪造 source 行保持引用状态、所有 marker 可解析。
