@@ -1,8 +1,24 @@
 # moon-trust
 
+[![ci](https://github.com/ShunjunGu/trusted-evidence-layer/actions/workflows/ci.yml/badge.svg)](https://github.com/ShunjunGu/trusted-evidence-layer/actions/workflows/ci.yml)
+
 A **deterministic trusted-evidence layer** between retrievers and generators: every scan turns an untrusted retrieval feed into a single-line, JSON-serializable report — snapshot of the query and config, risk findings per block, explicit cross-document conflicts, quarantine audit trail, evidence re-ranked by retrieval score plus an explainable trust score minus conflict penalties, a budgeted generator-ready context with citations, and diagnostics — and two runs on identical inputs produce **byte-identical** output. A one-command [acceptance demo](#验收演示有无信任层对比) runs the same fixed corpus with and without the layer and reports exactly what changed.
 
 ## Install
+
+### From mooncakes
+
+[`ShunjunGu/moon-trust`](https://mooncakes.io/docs/ShunjunGu/moon-trust) is
+published on mooncakes:
+
+```console
+$ moon add ShunjunGu/moon-trust
+```
+
+Import the library package as `ShunjunGu/moon-trust/src` (alias `@src`); the
+CLI package is `ShunjunGu/moon-trust/cmd/main`.
+
+### From source
 
 Requires the [MoonBit](https://www.moonbitlang.com) toolchain (`moon`):
 
@@ -15,6 +31,81 @@ Then, from the repository root:
 $ moon update
 $ moon build --target native
 ```
+
+## 最小示例
+
+Two runnable examples live under `examples/` and are executed in CI.
+
+### 1. Quick start — rerank and cite
+
+`examples/quickstart` builds three candidates, runs the default pipeline, and
+prints the rank, trust score, generator-ready context, and citations:
+
+```console
+$ moon run examples/quickstart --target native
+moon-trust quickstart
+query: expense deadline
+
+rank  id             retrieval  trust     rerank
+1     curated          0.7000     0.9500    1.6500
+2     handbook         0.7000     0.9375    1.6375
+3     short-mirror     0.9500     0.5167    1.4667
+
+context: 3 blocks, 53 tokens / budget 512
+[1] | Expense reports are due within 30 days of travel.
+source: Expenses Policy | s3://knowledge/expenses.md | 2026-11-02T00:00:00Z
+
+[2] | Expense reports are due within 30 days of travel.
+source: Travel Handbook | https://intranet.example.com/handbook | 2026-11-01T00:00:00Z
+
+[3] | short
+source: (untitled) | file:///tmp/mirror.txt |
+
+citations:
+  [1] curated -> s3://knowledge/expenses.md
+  [2] handbook -> https://intranet.example.com/handbook
+  [3] short-mirror -> file:///tmp/mirror.txt
+```
+
+The `short-mirror` block has the highest retrieval score (`0.95`) but a thin
+source: no title, no fetch time, a local `file://` URI, and a one-word body. The
+trust blend (`0.5167`) drops it below `handbook` (`0.9375`) and `curated`
+(`0.9500`), so the generator sees the complete, curated sources first.
+
+### 2. Injection triage — mark vs drop
+
+`examples/injection-triage` scans one benign and three injected chunks under the
+`mark` and `drop` policies:
+
+```console
+$ moon run examples/injection-triage --target native
+moon-trust injection triage
+
+mark policy: 4 evidence kept, 4 findings
+  override: instruction.override (high): instruction override: text asks to ignore or replace the caller's instructions (matched: "ignore previous instructions")
+  override: exfiltration.secret (high): exfiltration phrase: text asks to reveal or print protected instructions or secrets (matched: "reveal your system prompt")
+  hidden: hidden.zero-width (high): hidden character: U+200B zero-width space can conceal text from human review
+  role: role.marker (high): role marker: a reserved chat or role delimiter appears in retrieved text (matched: "<|system|>")
+
+drop policy: 1 evidence kept, 3 quarantined, blocked=true
+  override: dropped by policy: high-severity risk
+    instruction.override (high)
+    exfiltration.secret (high)
+  hidden: dropped by policy: high-severity risk
+    hidden.zero-width (high)
+  role: dropped by policy: high-severity risk
+    role.marker (high)
+
+context kept under the drop policy:
+[1] | Expense reports are due within 30 days.
+source: handbook | https://example.com/handbook | 2026-11-08T00:00:00Z
+```
+
+`mark` keeps every block and reports the rules that fired. `drop` removes the
+three high-severity blocks, lists them in `quarantined`, and sets `blocked=true`
+because `block_on_high` is enabled; the context contains only the benign chunk.
+Both examples assert their own invariants, so a regression fails the CI run
+rather than silently printing different output.
 
 ## Scan CLI
 
@@ -50,6 +141,56 @@ The full usage line is:
 usage: moon-trust scan <query> <candidates.json> [--top-k N] [--policy drop|mark|downrank] [--block-on-high] [--risk-weight W] [--conflict-weight W] [--context-budget N]
        moon-trust demo <candidates.json> [--json-out PATH]
 ```
+
+## 评分规则
+
+All scores are deterministic heuristics in `[0, 1]`. They are **not**
+probabilities, model confidence, or truth judgments; every sub-signal is
+reported so a caller can audit or re-weight the result.
+
+**Retrieval normalization.** If every retrieval score in the batch is already
+inside `[0, 1]`, it is used as-is. Otherwise the batch is min-max normalized to
+`[0, 1]`. The value used by reranking is echoed as `retrieval_normalized` next
+to the raw `retrieval_score`.
+
+**Trust score.**
+
+```text
+trust.score = clamp01((source_weight × source_score +
+                       content_weight × content_score) × risk_factor)
+
+source_score  = (metadata + source_type) / 2
+  metadata    = non-empty {uri, title, fetched_at} plus present hint, / 4
+  source_type = https 1.0 | s3/gs 0.8 | http 0.6 | file 0.4 | other :// 0.3 | none 0.2
+
+content_score = (length + template_cleanliness + consistency) / 3
+  length              = clamp01(UTF-16 code units / 40)
+  template_ratio      = share of { } < > in the raw text
+  template_cleanliness= clamp01(1 − 8 × template_ratio)   # 0 at ≥ 12.5%
+  consistency         = 1 / (1 + conflict_count)
+```
+
+`source_weight` and `content_weight` default to `0.5 / 0.5` and are normalized
+to sum to 1; non-finite values fall back to the defaults, and a non-positive sum
+also falls back to equal weights. `risk_factor` is `1.0` under `mark` and
+`drop`; under `downrank` it is
+`1 − clamp01(Σ severity_penalty × risk_weight)` with penalties high `0.5`,
+medium `0.25`, low `0.1` (so two high findings already zero the score). The
+factor actually applied is echoed as `trust.breakdown.risk`.
+
+**Rerank score.**
+
+```text
+rerank_score = retrieval_normalized
+             + trust_weight × trust.score
+             − conflict_penalty
+
+conflict_penalty = clamp01(conflict_weight × conflict_count)
+```
+
+Defaults are `trust_weight = 1.0`, `conflict_weight = 0.5`, and
+`risk_weight = 1.0`. Evidence is sorted by `rerank_score` descending, then id
+ascending, then original input order; `top_k` truncates after sorting.
 
 ## 验收演示：有/无信任层对比
 
@@ -159,9 +300,10 @@ Library callers can additionally set `enabled_rules: Some([...])` in `ScanConfig
 
 `diagnostics` reports `risk_finding_count` (all findings), `quarantined_count`, `conflict_count` (explicit pairs), `conflicts_truncated`, `output_count`, and `unknown_rule_ids`. The stage counters are `ingest` (input candidates), `dedupe` (kept after id dedupe), `risk` (blocks with at least one finding), `isolate` (blocks surviving the policy), `conflict` (reported pairs), `sort` (ranked evidence), `topk` (evidence after truncation), and `context` (evidence included in the assembled context).
 
-### 误报与边界
+### 误报与漏报边界
 
-The rule set is an inspectable heuristic, not a classifier. Known boundaries:
+The rule set is an inspectable heuristic, not a classifier. Known
+false-positive and false-negative boundaries:
 
 - **Ordinary imperatives stay low severity.** "You should consult a doctor…" and "请输出报表" produce `instruction.imperative` (low) and never trigger the drop policy; under the default `downrank` policy they only lose 10% of trust.
 - **Code fences are not delimiter escapes.** The delimiter rule targets explicit context-closing tokens (`</system>`, `[END OF CONTEXT]`, …), not Markdown fences or headings.
@@ -246,7 +388,7 @@ Conflicts:
 
 ## Library
 
-The scan core (`src/`) is a pure library usable from any MoonBit CLI or FFI target (native / wasm-gc / js) — only `cmd/main` touches the filesystem. Import as `ShunjunGu/moon-trust`.
+The scan core (`src/`) is a pure library usable from any MoonBit CLI or FFI target (native / wasm / wasm-gc / js) — only `cmd/main` touches the filesystem. Add it with `moon add ShunjunGu/moon-trust` and import `ShunjunGu/moon-trust/src`.
 
 ```moonbit
 let report = @src.scan(
@@ -256,6 +398,35 @@ let report = @src.scan(
 )
 // The generator-ready text and its citation table:
 let context = report.context
+```
+
+`candidates` is `Array[@src.Candidate]`; `report.to_json().stringify()` produces the
+same single-line JSON the CLI prints. The complete, compiling version of this
+snippet is [`examples/quickstart/main.mbt`](examples/quickstart/main.mbt).
+
+## Coverage
+
+CI runs `moon coverage analyze` and uploads the `full_summary` text and an HTML
+report as the `coverage` artifact.
+
+Current line coverage (2026-11-08, instrumented test run):
+
+| scope | covered / total | coverage |
+| --- | --- | --- |
+| library (`src/` + `src/cli/`) | 1239 / 1440 | **86.0%** |
+| whole module (includes `cmd/main` and both example executables) | 1239 / 1542 | 80.4% |
+
+`cmd/main` (34 lines) is the native-only executable shell; CI exercises it
+through the binary/CLI integration checks rather than in-process tests. The two
+example executables (34 instrumented lines each) are run by the native CLI job
+but have no test entry point, so the instrumented library run reports them as
+uncovered.
+
+Reproduce locally:
+
+```console
+$ moon coverage analyze
+$ find _build -name '*.trace.source' -print0 | xargs -0 moon coverage report -f full_summary
 ```
 
 ## Tests
@@ -268,6 +439,32 @@ Total tests: 125, passed: 125, failed: 0. [js]
 Total tests: 125, passed: 125, failed: 0. [native]
 ```
 
+CI runs each target as a separate matrix job (`wasm`, `wasm-gc`, `js`, `native`)
+and runs the native CLI, both examples, the blocked-exit check, and the
+reproducible demo on Linux, macOS, and Windows.
+
+## 版本与发布
+
+- Current version: `0.1.1` (SemVer); see [CHANGELOG.md](CHANGELOG.md).
+- Published on mooncakes as `ShunjunGu/moon-trust` (`moon add ShunjunGu/moon-trust`).
+- Name check (before publication on 2026-11-08):
+  `GET https://mooncakes.io/api/v0/modules/ShunjunGu/moon-trust` returned `404`
+  (unregistered), and registry searches for `moon-trust`,
+  `trust layer`, `trusted evidence`, `retrieval trust`, and `evidence layer`
+  found no package that combines retrieval-candidate risk scanning, trust
+  scoring, cross-document conflict detection, and citation-context assembly.
+  Adjacent packages exist but do not implement this layer:
+  `starlittle/MoonEvidence` verifies evidence *packs* (manifests, digests,
+  Merkle proofs, provenance), and `cjyhjy/contextguard` validates extractive
+  evidence in bounded tool-output formats.
+- The name deliberately avoids the semantic conflict with
+  `starlittle/MoonEvidence`: this package does not verify packed evidence, and
+  `MoonEvidence` does not score retrieval candidates, detect cross-document
+  conflicts, scan for injected instructions, or assemble a citation context.
+- CI matrix: `.github/workflows/ci.yml` covers native / wasm / wasm-gc / js for
+  the library, native CLI on Linux/macOS/Windows, and a coverage artifact job.
+
 ## License
 
-Apache-2.0 (see `moon.mod`).
+Apache-2.0. The full text is in [LICENSE](LICENSE) and the SPDX identifier is
+declared in `moon.mod`.

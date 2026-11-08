@@ -11,8 +11,38 @@ on:
   pull_request:
 
 jobs:
-  check-and-test:
-    name: check + test (${{ matrix.os }})
+  # Library check + test, one job per target. This is the target matrix the
+  # package claims: native, wasm, wasm-gc, and js are all pure-computation.
+  library:
+    name: library (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [wasm, wasm-gc, js, native]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install MoonBit
+        shell: bash
+        run: |
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
+
+      - name: Update registry
+        run: moon update
+
+      - name: Check (deny warnings)
+        run: moon check --deny-warn --target ${{ matrix.target }}
+
+      - name: Test
+        run: moon test --target ${{ matrix.target }}
+
+  # The CLI is native-only. Run the actual binary on every supported OS and
+  # execute both examples, the blocked-exit contract, and the reproducible
+  # acceptance demo.
+  native-cli:
+    name: native CLI (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
@@ -45,22 +75,76 @@ jobs:
       - name: Update registry
         run: moon update
 
-      - name: Check (deny warnings, all targets)
-        run: moon check --deny-warn --target all
+      - name: Check (native, deny warnings)
+        run: moon check --deny-warn --target native
 
-      - name: Test (all targets)
-        run: moon test --target all
+      - name: Test (native)
+        run: moon test --target native
+
+      - name: Build CLI
+        run: moon build --target native
+
+      - name: Run examples
+        shell: bash
+        run: |
+          moon run examples/quickstart --target native
+          moon run examples/injection-triage --target native
+
+      - name: Blocked scan exits 3
+        shell: bash
+        run: |
+          set +e
+          moon run cmd/main --target native -- scan hello tests/fixtures/injected.json --policy drop --block-on-high > /dev/null
+          code=$?
+          set -e
+          test "$code" -eq 3
 
       # The acceptance demo must be reproducible offline: same corpus, same
-      # summary, same JSON bytes. Runs on every matrix OS.
+      # summary, same JSON bytes. Runs on every native matrix OS.
       - name: Demo comparison is reproducible
         shell: bash
         run: |
-          moon build --target native
           moon run cmd/main --target native -- demo tests/fixtures/demo.json --json-out "$RUNNER_TEMP/demo-a.json" > "$RUNNER_TEMP/demo-a.txt"
           moon run cmd/main --target native -- demo tests/fixtures/demo.json --json-out "$RUNNER_TEMP/demo-b.json" > "$RUNNER_TEMP/demo-b.txt"
           diff -u "$RUNNER_TEMP/demo-a.txt" "$RUNNER_TEMP/demo-b.txt"
           diff -u "$RUNNER_TEMP/demo-a.json" "$RUNNER_TEMP/demo-b.json"
+
+  # Line coverage over the instrumented test run. The summary is printed to the
+  # log and both the summary and the HTML report are uploaded as artifacts.
+  coverage:
+    name: coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install MoonBit
+        shell: bash
+        run: |
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
+
+      - name: Update registry
+        run: moon update
+
+      - name: Run tests with coverage instrumentation
+        run: moon coverage analyze
+
+      - name: Write coverage reports
+        shell: bash
+        run: |
+          mkdir -p coverage
+          find _build -name '*.trace.source' -print0 \
+            | xargs -0 moon coverage report -f full_summary \
+            | tee coverage/summary.txt
+          find _build -name '*.trace.source' -print0 \
+            | xargs -0 moon coverage report -f html -o coverage/html
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage/
+          if-no-files-found: error
 
   fmt:
     name: fmt

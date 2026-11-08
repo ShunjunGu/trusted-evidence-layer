@@ -1,0 +1,11 @@
+# Development-only material: keep it out of the published package.
+/AGENTS.md
+/CONTEXT.md
+/MoonBit-*.md
+/docs/
+/research/
+/.scratch/
+/.omc/
+
+# The root package manifest, sources, tests, examples, README, LICENSE, and
+# CHANGELOG are published as-is.
